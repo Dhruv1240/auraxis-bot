@@ -131,7 +131,7 @@ async def aura(ctx):
 
 @bot.command()
 async def aurarank(ctx):
-    score = aura.get(str(ctx.author.id), 0)
+    score = aura_data.get(str(ctx.author.id), 0)
 
     if score >= 1500:
         rank = "☄️ GOD AURA"
@@ -146,9 +146,10 @@ async def aurarank(ctx):
 
     await ctx.send(f"{ctx.author.mention} → **{rank}** ({score})")
 
+
 @bot.command()
 async def topaura(ctx):
-    top = sorted(aura.items(), key=lambda x: x[1], reverse=True)[:5]
+    top = sorted(aura_data.items(), key=lambda x: x[1], reverse=True)[:5]
     msg = "🏆 **TOP AURA USERS** 🏆\n"
 
     for i, (uid, score) in enumerate(top, 1):
