@@ -4,6 +4,7 @@ import json
 import os
 import time
 import difflib
+from textblob import TextBlob
 
 # ================== CONFIG ==================
 
@@ -84,6 +85,37 @@ def calculate_ai_aura(message: str) -> int:
 
     return max(score, 0)
 
+def calculate_ai_aura_local(message: str) -> int:
+    blob = TextBlob(message)
+
+    polarity = blob.sentiment.polarity      # -1 (negative) to +1 (positive)
+    subjectivity = blob.sentiment.subjectivity  # 0 (fact) to 1 (opinion)
+
+    score = 0
+
+    # Positive sentiment
+    if polarity > 0.4:
+        score += 3
+    elif polarity > 0.1:
+        score += 2
+    elif polarity > 0:
+        score += 1
+
+    # Negative sentiment penalty
+    if polarity < -0.3:
+        score -= 2
+
+    # Message effort
+    if len(message) > 30:
+        score += 1
+
+    # Expressive / emotional messages
+    if subjectivity > 0.5:
+        score += 1
+
+    # Final clamp
+    return max(0, min(score, 4))
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -111,7 +143,12 @@ async def on_message(message):
                 return
 
     # AI-based scoring
-    aura_gain = calculate_ai_aura(content)
+   rule_score = calculate_ai_aura(content)
+   nlp_score = calculate_ai_aura_local(content)
+
+   aura_gain = max(rule_score, nlp_score)
+
+
     if aura_gain <= 0:
         return
 
