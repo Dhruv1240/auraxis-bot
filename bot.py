@@ -8,7 +8,7 @@ from textblob import TextBlob
 
 # ================== CONFIG ==================
 
-TOKEN = os.getenv("TOKEN")  # Railway env variable
+TOKEN = os.getenv("TOKEN")
 DATA_FILE = "aura_data.json"
 PREFIX = "!"
 
@@ -42,58 +42,41 @@ aura_data = load_data()
 recent_aura_time = {}   # user_id -> last aura timestamp
 recent_messages = {}    # user_id -> (last_message, timestamp)
 
-AURA_COOLDOWN = 8        # seconds
-DUPLICATE_WINDOW = 15    # seconds
+AURA_COOLDOWN = 8
+DUPLICATE_WINDOW = 15
 SIMILARITY_THRESHOLD = 0.85
 
-# ================== EVENTS ===================
+# ================== AI SCORING ===============
 
-@bot.event
-async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-
-def calculate_ai_aura(message: str) -> int:
+def calculate_ai_aura_rules(message: str) -> int:
     score = 0
-    length = len(message)
 
-    # 1️⃣ Length intelligence
-    if length >= 15:
+    if len(message) >= 15:
         score += 1
-    if length >= 35:
+    if len(message) >= 35:
         score += 1
 
-    # 2️⃣ Emotion / positivity signals
-    positive_words = [
-        "fire", "crazy", "clean", "goated", "insane",
-        "love", "cool", "legend", "based", "hard"
-    ]
-    if any(word in message for word in positive_words):
+    if any(word in message for word in [
+        "fire", "clean", "goated", "insane", "love",
+        "cool", "legend", "based"
+    ]):
         score += 1
 
-    # 3️⃣ Emoji intelligence (capped)
-    emojis = ["🔥", "💀", "🗿", "👑", "⚡", "😂", "😈"]
-    emoji_count = sum(message.count(e) for e in emojis)
-    score += min(emoji_count, 2)
+    emojis = ["🔥", "🗿", "👑", "⚡", "😂"]
+    score += min(sum(message.count(e) for e in emojis), 2)
 
-    # 4️⃣ Exclamation / hype
     if message.count("!") >= 2:
         score += 1
 
-    # 5️⃣ Penalize low-effort
-    if length < 5:
-        score -= 1
-
-    return max(score, 0)
+    return max(0, min(score, 3))
 
 def calculate_ai_aura_local(message: str) -> int:
     blob = TextBlob(message)
-
-    polarity = blob.sentiment.polarity      # -1 (negative) to +1 (positive)
-    subjectivity = blob.sentiment.subjectivity  # 0 (fact) to 1 (opinion)
+    polarity = blob.sentiment.polarity
+    subjectivity = blob.sentiment.subjectivity
 
     score = 0
 
-    # Positive sentiment
     if polarity > 0.4:
         score += 3
     elif polarity > 0.1:
@@ -101,20 +84,22 @@ def calculate_ai_aura_local(message: str) -> int:
     elif polarity > 0:
         score += 1
 
-    # Negative sentiment penalty
     if polarity < -0.3:
         score -= 2
 
-    # Message effort
     if len(message) > 30:
         score += 1
 
-    # Expressive / emotional messages
     if subjectivity > 0.5:
         score += 1
 
-    # Final clamp
     return max(0, min(score, 4))
+
+# ================== EVENTS ===================
+
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
 
 @bot.event
 async def on_message(message):
@@ -142,40 +127,13 @@ async def on_message(message):
             if similarity >= SIMILARITY_THRESHOLD:
                 return
 
-    # AI-based scoring
-rule_score = calculate_ai_aura(content)
-nlp_score = calculate_ai_aura_local(content)
-
-aura_gain = max(rule_score, nlp_score)
-
+    # 🔥 HYBRID AI SCORING (CORRECT PLACE)
+    rule_score = calculate_ai_aura_rules(content)
+    nlp_score = calculate_ai_aura_local(content)
+    aura_gain = max(rule_score, nlp_score)
 
     if aura_gain <= 0:
         return
-
-    # Apply aura
-    aura_data[user_id] = aura_data.get(user_id, 0) + aura_gain
-    save_data(aura_data)
-
-    recent_aura_time[user_id] = now
-    recent_messages[user_id] = (content, now)
-
-    print(f"[AURA] {message.author} +{aura_gain} → {aura_data[user_id]}")
-
-
-    # ===== Aura scoring logic =====
-    aura_gain = 1
-
-    if len(content) >= 20:
-        aura_gain += 1
-
-    if any(e in content for e in ["🔥", "💀", "🗿", "👑", "⚡"]):
-        aura_gain += 1
-
-    if content.count("!") >= 2:
-        aura_gain += 1
-
-    # Cap per message
-    aura_gain = min(aura_gain, 3)
 
     aura_data[user_id] = aura_data.get(user_id, 0) + aura_gain
     save_data(aura_data)
