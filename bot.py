@@ -197,9 +197,8 @@ async def aura(ctx):
 
 @bot.command()
 async def aurarank(ctx):
-    aura_data = load_data()
-score = aura_data.get(str(ctx.author.id), 0)
-
+    aura = load_data()
+    score = aura.get(str(ctx.author.id), 0)
 
     if score >= 1500:
         rank = "☄️ GOD AURA"
@@ -213,6 +212,7 @@ score = aura_data.get(str(ctx.author.id), 0)
         rank = "💤 No Aura"
 
     await ctx.send(f"{ctx.author.mention} → **{rank}** ({score})")
+
 
 
 @bot.command()
