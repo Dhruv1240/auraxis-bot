@@ -179,13 +179,19 @@ async def on_presence_update(before, after):
 
 @bot.command()
 async def aura(ctx):
-    uid = str(ctx.author.id)
-    score = aura_data.get(uid, 0)
-    await ctx.send(f"🧿 {ctx.author.mention}'s Aura Score: **{score}**")
+    aura_data = load_data()
+    score = aura_data.get(str(ctx.author.id), 0)
+
+    await ctx.send(
+        f"🔵 {ctx.author.mention}'s Aura Score: **{score}**"
+    )
+
 
 @bot.command()
 async def aurarank(ctx):
-    score = aura_data.get(str(ctx.author.id), 0)
+    aura_data = load_data()
+score = aura_data.get(str(ctx.author.id), 0)
+
 
     if score >= 1500:
         rank = "☄️ GOD AURA"
