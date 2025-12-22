@@ -99,6 +99,18 @@ last_message_time = {}
 import time
 from collections import defaultdict
 
+import time
+import difflib
+
+# ===== Aura Anti-Spam Memory =====
+recent_aura_time = {}      # user_id -> last aura timestamp
+recent_messages = {}       # user_id -> (last_message, timestamp)
+
+# ===== Anti-farm tuning =====
+AURA_COOLDOWN = 8          # seconds between aura gains
+DUPLICATE_WINDOW = 15      # seconds
+SIMILARITY_THRESHOLD = 0.85
+
 # cooldown tracker
 last_message_time = defaultdict(float)
 
