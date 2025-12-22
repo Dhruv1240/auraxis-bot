@@ -96,67 +96,75 @@ import re
 
 last_message_time = {}
 
+import time
+from collections import defaultdict
+
+# cooldown tracker
+last_message_time = defaultdict(float)
+
 @bot.event
 async def on_message(message):
-    # 1️⃣ Ignore bots
+    # ignore bots
     if message.author.bot:
         return
 
-    # 2️⃣ Always allow commands
+    # allow commands to work
+    await bot.process_commands(message)
+
+    # ignore commands for aura
     if message.content.startswith("!"):
-        await bot.process_commands(message)
         return
 
-    # 3️⃣ Basic text cleanup
-    text = message.content.strip()
-
-    # Ignore empty / very short messages
-    if len(text) < 5:
-        return
-
-    user_id = str(message.author.id)
+    uid = str(message.author.id)
     now = time.time()
 
-    # 4️⃣ Cooldown (20 seconds)
-    last_time = last_message_time.get(user_id, 0)
-    if now - last_time < 20:
+    # cooldown: 20 seconds per aura gain
+    if now - last_message_time[uid] < 20:
         return
 
-    last_message_time[user_id] = now
+    last_message_time[uid] = now
 
-    # 5️⃣ Load aura data
-    aura_data = load_data()
-    current = aura_data.get(user_id, 0)
+    content = message.content.lower()
+    words = content.split()
 
-    # =========================
-    # 🧠 AI-STYLE AURA SCORING
-    # =========================
+    # -------- AI-LIKE SCORING ----------
+    aura_gain = 0
 
-    aura_gain = 1  # base
+    # message length influence
+    if len(words) >= 6:
+        aura_gain += 2
+    if len(words) >= 12:
+        aura_gain += 3
 
-    # Length bonus
-    if len(text) >= 30:
-        aura_gain += 1
-    if len(text) >= 80:
-        aura_gain += 1
+    # positive energy
+    positive_words = [
+        "fire", "lit", "cool", "nice", "great", "awesome",
+        "love", "respect", "clean", "based", "goated"
+    ]
+    aura_gain += sum(1 for w in positive_words if w in content)
 
-    # Emoji bonus (max +2)
-    emojis = re.findall(r"[🔥😂❤️✨💀👍🙏]", text)
-    aura_gain += min(len(emojis), 2)
+    # emoji power
+    emoji_bonus = ["🔥", "💯", "⚡", "👑", "🗿"]
+    aura_gain += sum(2 for e in emoji_bonus if e in message.content)
 
-    # Anti-spam hard cap
-    aura_gain = min(aura_gain, 5)
+    # cap gain
+    aura_gain = min(aura_gain, 8)
 
-    # 6️⃣ Save aura
-    aura_data[user_id] = current + aura_gain
-    save_data(aura_data)
+    if aura_gain <= 0:
+        return
 
-    # 7️⃣ Optional reaction (visual feedback)
-    if aura_gain >= 4:
+    # load + save
+    aura = load_data()
+    aura[uid] = aura.get(uid, 0) + aura_gain
+    save_data(aura)
+
+    # subtle reaction (not spammy)
+    if aura_gain >= 5:
         try:
             await message.add_reaction("🔥")
         except:
             pass
+
 
 
 
