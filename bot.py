@@ -6,7 +6,6 @@ import random
 
 # ================= CONFIG =================
 
-TOKEN = ""   # <-- put your bot token here
 DATA_FILE = "aura_data.json"
 GENERAL_CHANNEL = "general"
 
@@ -225,5 +224,13 @@ async def ping(ctx):
     await ctx.send("pong")
 
 # ================= RUN =================
+import os 
+
+
+TOKEN = os.getenv("TOKEN")
+
+if TOKEN is None:
+    raise Exception("TOKEN not found in environment variables")
 
 bot.run(TOKEN)
+
