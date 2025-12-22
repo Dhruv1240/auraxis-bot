@@ -91,42 +91,73 @@ import re
 
 last_message_time = {}  # user_id -> timestamp
 
+import time
+import re
+
+last_message_time = {}
+
 @bot.event
 async def on_message(message):
-    # Ignore bots
+    # 1️⃣ Ignore bots
     if message.author.bot:
         return
 
-    # Always allow commands to work
+    # 2️⃣ Always allow commands
     if message.content.startswith("!"):
         await bot.process_commands(message)
         return
 
-    # Only count messages in general channel (optional)
-    if message.channel.name != GENERAL_CHANNEL:
+    # 3️⃣ Basic text cleanup
+    text = message.content.strip()
+
+    # Ignore empty / very short messages
+    if len(text) < 5:
         return
 
     user_id = str(message.author.id)
     now = time.time()
 
-    # ⏳ Cooldown: 30 seconds per aura gain
-    if user_id in last_message_time:
-        if now - last_message_time[user_id] < 30:
-            return
+    # 4️⃣ Cooldown (20 seconds)
+    last_time = last_message_time.get(user_id, 0)
+    if now - last_time < 20:
+        return
 
     last_message_time[user_id] = now
 
-    # 🚫 Low-effort message filter
-    content = message.content.strip()
-    if len(content) < 5:
-        return
-    aura_gain = calculate_aura_score(content)
+    # 5️⃣ Load aura data
+    aura_data = load_data()
+    current = aura_data.get(user_id, 0)
 
-    if aura_gain <= 0:
-        return  # no reward for negative / useless messages
+    # =========================
+    # 🧠 AI-STYLE AURA SCORING
+    # =========================
 
-    aura_data[user_id] = aura_data.get(user_id, 0) + aura_gain
+    aura_gain = 1  # base
+
+    # Length bonus
+    if len(text) >= 30:
+        aura_gain += 1
+    if len(text) >= 80:
+        aura_gain += 1
+
+    # Emoji bonus (max +2)
+    emojis = re.findall(r"[🔥😂❤️✨💀👍🙏]", text)
+    aura_gain += min(len(emojis), 2)
+
+    # Anti-spam hard cap
+    aura_gain = min(aura_gain, 5)
+
+    # 6️⃣ Save aura
+    aura_data[user_id] = current + aura_gain
     save_data(aura_data)
+
+    # 7️⃣ Optional reaction (visual feedback)
+    if aura_gain >= 4:
+        try:
+            await message.add_reaction("🔥")
+        except:
+            pass
+
 
 
 
