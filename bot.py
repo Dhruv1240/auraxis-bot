@@ -86,25 +86,48 @@ async def on_ready():
     )
     print(f"🟢 Aura Bot Online as {bot.user}")
 
+import time
+import re
+
+last_message_time = {}  # user_id -> timestamp
+
 @bot.event
 async def on_message(message):
+    # Ignore bots
     if message.author.bot:
         return
 
-    # DEBUG LINE (IMPORTANT)
-    print("MESSAGE RECEIVED:", message.content)
+    # Always allow commands to work
+    if message.content.startswith("!"):
+        await bot.process_commands(message)
+        return
 
-    uid = str(message.author.id)
-    aura_data.setdefault(uid, 0)
+    # Only count messages in general channel (optional)
+    if message.channel.name != GENERAL_CHANNEL:
+        return
 
-    gained = calculate_aura(message)
-    aura_data[uid] += gained
+    user_id = str(message.author.id)
+    now = time.time()
 
+    # ⏳ Cooldown: 30 seconds per aura gain
+    if user_id in last_message_time:
+        if now - last_message_time[user_id] < 30:
+            return
+
+    last_message_time[user_id] = now
+
+    # 🚫 Low-effort message filter
+    content = message.content.strip()
+    if len(content) < 5:
+        return
+    aura_gain = calculate_aura_score(content)
+
+    if aura_gain <= 0:
+        return  # no reward for negative / useless messages
+
+    aura_data[user_id] = aura_data.get(user_id, 0) + aura_gain
     save_data(aura_data)
-    await assign_roles(message.author, aura_data[uid])
 
-    # THIS MUST BE LAST
-    await bot.process_commands(message)
 
 
 
@@ -223,6 +246,46 @@ async def help(ctx):
 @bot.command()
 async def ping(ctx):
     await ctx.send("pong")
+
+def calculate_aura_score(text: str) -> int:
+    text = text.strip()
+
+    score = 0
+
+    # Base score for meaningful messages
+    score += min(len(text) // 20, 5)  # max +5 from length
+
+    # Positive sentiment heuristics
+    positive_words = [
+        "good", "great", "awesome", "nice", "love", "amazing",
+        "cool", "fun", "happy", "gg", "well played"
+    ]
+
+    negative_words = [
+        "hate", "stupid", "idiot", "trash", "worst",
+        "kill", "die", "shut up"
+    ]
+
+    lowered = text.lower()
+
+    for word in positive_words:
+        if word in lowered:
+            score += 2
+
+    for word in negative_words:
+        if word in lowered:
+            score -= 2
+
+    # Emoji bonus
+    emoji_count = len(re.findall(r"[😀-🙏🔥✨💀😂❤️👍]", text))
+    score += min(emoji_count, 3)
+
+    # Caps rage penalty
+    if text.isupper() and len(text) > 8:
+        score -= 3
+
+    # Clamp final score
+    return max(-2, min(score, 8))
 
 # ================= RUN =================
 import os 
