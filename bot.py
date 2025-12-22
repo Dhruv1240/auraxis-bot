@@ -51,6 +51,39 @@ SIMILARITY_THRESHOLD = 0.85
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
 
+def calculate_ai_aura(message: str) -> int:
+    score = 0
+    length = len(message)
+
+    # 1️⃣ Length intelligence
+    if length >= 15:
+        score += 1
+    if length >= 35:
+        score += 1
+
+    # 2️⃣ Emotion / positivity signals
+    positive_words = [
+        "fire", "crazy", "clean", "goated", "insane",
+        "love", "cool", "legend", "based", "hard"
+    ]
+    if any(word in message for word in positive_words):
+        score += 1
+
+    # 3️⃣ Emoji intelligence (capped)
+    emojis = ["🔥", "💀", "🗿", "👑", "⚡", "😂", "😈"]
+    emoji_count = sum(message.count(e) for e in emojis)
+    score += min(emoji_count, 2)
+
+    # 4️⃣ Exclamation / hype
+    if message.count("!") >= 2:
+        score += 1
+
+    # 5️⃣ Penalize low-effort
+    if length < 5:
+        score -= 1
+
+    return max(score, 0)
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -59,27 +92,38 @@ async def on_message(message):
     await bot.process_commands(message)
 
     content = message.content.strip().lower()
-
-    # Ignore commands
     if content.startswith(PREFIX):
         return
 
     user_id = str(message.author.id)
     now = time.time()
 
-    # Cooldown check
-    last_gain = recent_aura_time.get(user_id, 0)
-    if now - last_gain < AURA_COOLDOWN:
+    # Cooldown
+    if now - recent_aura_time.get(user_id, 0) < AURA_COOLDOWN:
         return
 
-    # Duplicate / similarity check
+    # Duplicate detection
     if user_id in recent_messages:
         last_msg, last_time = recent_messages[user_id]
-
         if now - last_time < DUPLICATE_WINDOW:
             similarity = difflib.SequenceMatcher(None, content, last_msg).ratio()
             if similarity >= SIMILARITY_THRESHOLD:
                 return
+
+    # AI-based scoring
+    aura_gain = calculate_ai_aura(content)
+    if aura_gain <= 0:
+        return
+
+    # Apply aura
+    aura_data[user_id] = aura_data.get(user_id, 0) + aura_gain
+    save_data(aura_data)
+
+    recent_aura_time[user_id] = now
+    recent_messages[user_id] = (content, now)
+
+    print(f"[AURA] {message.author} +{aura_gain} → {aura_data[user_id]}")
+
 
     # ===== Aura scoring logic =====
     aura_gain = 1
