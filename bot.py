@@ -104,66 +104,51 @@ last_message_time = defaultdict(float)
 
 @bot.event
 async def on_message(message):
-    # ignore bots
     if message.author.bot:
         return
 
-    # allow commands to work
     await bot.process_commands(message)
 
-    # ignore commands for aura
-    if message.content.startswith("!"):
+    content = message.content.strip().lower()
+
+    # Ignore commands
+    if content.startswith("!"):
         return
 
-    uid = str(message.author.id)
+    user_id = str(message.author.id)
     now = time.time()
 
-    # cooldown: 20 seconds per aura gain
-    if now - last_message_time[uid] < 20:
+    # Cooldown check
+    last_time = recent_aura_time.get(user_id, 0)
+    if now - last_time < AURA_COOLDOWN:
         return
 
-    last_message_time[uid] = now
+    # Duplicate / spam check
+    last_msg, last_msg_time = recent_messages.get(user_id, ("", 0))
+    similarity = difflib.SequenceMatcher(None, content, last_msg).ratio()
 
-    content = message.content.lower()
-    words = content.split()
+    if similarity > SIMILARITY_THRESHOLD and now - last_msg_time < DUPLICATE_WINDOW:
+        return
 
-    # -------- AI-LIKE SCORING ----------
-    aura_gain = 0
-
-    # message length influence
-    if len(words) >= 6:
-        aura_gain += 2
-    if len(words) >= 12:
-        aura_gain += 3
-
-    # positive energy
-    positive_words = [
-        "fire", "lit", "cool", "nice", "great", "awesome",
-        "love", "respect", "clean", "based", "goated"
-    ]
-    aura_gain += sum(1 for w in positive_words if w in content)
-
-    # emoji power
-    emoji_bonus = ["🔥", "💯", "⚡", "👑", "🗿"]
-    aura_gain += sum(2 for e in emoji_bonus if e in message.content)
-
-    # cap gain
-    aura_gain = min(aura_gain, 8)
+    # Aura scoring
+    aura_gain = calculate_aura(content)
 
     if aura_gain <= 0:
         return
 
-    # load + save
-    aura = load_data()
-    aura[uid] = aura.get(uid, 0) + aura_gain
+    # ✅ Add aura
+    aura[user_id] = aura.get(user_id, 0) + aura_gain
     save_data(aura)
 
-    # subtle reaction (not spammy)
-    if aura_gain >= 5:
-        try:
-            await message.add_reaction("🔥")
-        except:
-            pass
+    # ✅ DEBUG LOG (THIS LINE)
+    print(f"[AURA] {message.author} +{aura_gain} → {aura[user_id]}")
+
+    # Update tracking
+    recent_messages[user_id] = (content, now)
+    recent_aura_time[user_id] = now
+
+
+
 
 
 
