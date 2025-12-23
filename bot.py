@@ -5,6 +5,12 @@ import os
 import time
 import difflib
 from textblob import TextBlob
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+# ================== AI MODEL ==================
+
+semantic_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # ================== CONFIG ==================
 
@@ -42,7 +48,7 @@ aura_data = load_data()
 recent_aura_time = {}   # user_id -> last aura timestamp
 recent_messages = {}    # user_id -> (last_message, timestamp)
 
-AURA_COOLDOWN = 8
+AURA_COOLDOWN = 30
 DUPLICATE_WINDOW = 15
 SIMILARITY_THRESHOLD = 0.85
 
@@ -95,6 +101,27 @@ def calculate_ai_aura_local(message: str) -> int:
 
     return max(0, min(score, 4))
 
+def calculate_ai_aura_semantic(message: str) -> int:
+    embedding = semantic_model.encode(message)
+
+    # Energy = confidence / presence
+    energy = np.linalg.norm(embedding)
+
+    length_bonus = min(len(message.split()) // 6, 2)
+
+    score = 0
+
+    if energy > 14:
+        score += 1
+    if energy > 17:
+        score += 1
+    if energy > 20:
+        score += 2
+
+    score += length_bonus
+
+    return max(0, min(score, 5))
+
 # ================== EVENTS ===================
 
 @bot.event
@@ -112,6 +139,10 @@ async def on_message(message):
     if content.startswith(PREFIX):
         return
 
+
+    if len(message.split()) < 4:
+    return
+
     user_id = str(message.author.id)
     now = time.time()
 
@@ -127,10 +158,16 @@ async def on_message(message):
             if similarity >= SIMILARITY_THRESHOLD:
                 return
 
-    # 🔥 HYBRID AI SCORING (CORRECT PLACE)
+    # 🔥 HYBRID AI SCORING 
     rule_score = calculate_ai_aura_rules(content)
     nlp_score = calculate_ai_aura_local(content)
-    aura_gain = max(rule_score, nlp_score)
+    semantic_score = calculate_ai_aura_semantic(content)
+
+    # Final AI decision
+    aura_gain = max(rule_score, nlp_score, semantic_score)
+
+    
+    
 
     if aura_gain <= 0:
         return
@@ -206,6 +243,11 @@ async def help(ctx):
     )
     embed.set_footer(text="Auraxis • Made by Dhruv")
     await ctx.send(embed=embed)
+
+@bot.command()
+@commands.cooldown(1, 5, commands.BucketType.user)
+async def aura(ctx):
+    ...
 
 # ================== RUN =====================
 
