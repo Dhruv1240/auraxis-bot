@@ -141,7 +141,7 @@ async def on_message(message):
 
 
     if len(message.split()) < 4:
-    return
+        return
 
     user_id = str(message.author.id)
     now = time.time()
