@@ -3,3 +3,5 @@ textblob
 sentence-transformers
 torch
 numpy
+openai
+detoxify

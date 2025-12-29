@@ -1,0 +1,60 @@
+{
+    "716836071941603368": [
+        {
+            "timestamp": 1766928122,
+            "change": -2,
+            "new_score": 109,
+            "reason": "normal"
+        },
+        {
+            "timestamp": 1766928153,
+            "change": 6,
+            "new_score": 115,
+            "reason": "normal"
+        },
+        {
+            "timestamp": 1766928206,
+            "change": 3,
+            "new_score": 118,
+            "reason": "normal"
+        },
+        {
+            "timestamp": 1766955271,
+            "change": 6,
+            "new_score": 124,
+            "reason": "normal"
+        },
+        {
+            "timestamp": 1766955311,
+            "change": -4,
+            "new_score": 120,
+            "reason": "normal"
+        },
+        {
+            "timestamp": 1766955360,
+            "change": -4,
+            "new_score": 116,
+            "reason": "normal"
+        },
+        {
+            "timestamp": 1766955436,
+            "change": 4,
+            "new_score": 120,
+            "reason": "normal"
+        },
+        {
+            "timestamp": 1766955716,
+            "change": 6,
+            "new_score": 126,
+            "reason": "normal"
+        }
+    ],
+    "690228099866034263": [
+        {
+            "timestamp": 1766928196,
+            "change": -2,
+            "new_score": 34,
+            "reason": "normal"
+        }
+    ]
+}
