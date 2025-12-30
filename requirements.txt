@@ -1,0 +1,7 @@
+discord.py
+textblob
+sentence-transformers
+torch
+numpy
+openai
+detoxify
