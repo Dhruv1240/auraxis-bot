@@ -689,3 +689,4 @@ if not TOKEN:
     raise RuntimeError("TOKEN not found in environment variables")
 
 bot.run(TOKEN)
+#just a prototype
