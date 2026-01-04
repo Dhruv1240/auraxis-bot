@@ -18,6 +18,18 @@ from io import BytesIO
 from collections import defaultdict
 from PIL import Image, ImageDraw, ImageFont 
 
+try:
+    from sentence_transformers import SentenceTransformer
+    from transformers import pipeline
+    ML_AVAILABLE = True
+except Exception:
+    ML_AVAILABLE = False
+
+if ML_AVAILABLE:
+    semantic_model = SentenceTransformer(...)
+else:
+    semantic_model = None
+
 # Optional: For image generation (aura cards)
 try:
     from PIL import Image, ImageDraw, ImageFont
