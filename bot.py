@@ -7,28 +7,23 @@ import time
 import difflib
 import asyncio
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline
+from transformers import pipeline 
 import numpy as np
-from openai import OpenAI
 import hashlib
 import re
 import random 
 from datetime import datetime, timedelta
 from io import BytesIO
 from collections import defaultdict
-from PIL import Image, ImageDraw, ImageFont 
+from PIL import Image, ImageDraw, ImageFont
+from openai import OpenAI 
+import math
+import requests
 
-try:
-    from sentence_transformers import SentenceTransformer
-    from transformers import pipeline
-    ML_AVAILABLE = True
-except Exception:
-    ML_AVAILABLE = False
-
-if ML_AVAILABLE:
-    semantic_model = SentenceTransformer(...)
-else:
-    semantic_model = None
+def pulse(frame, total, min_v, max_v):
+    return min_v + (max_v - min_v) * (
+        0.5 + 0.5 * math.sin(2 * math.pi * frame / total)
+    )
 
 # Optional: For image generation (aura cards)
 try:
@@ -55,7 +50,21 @@ openrouter_client = OpenAI(
 )
 
 TOKEN = os.getenv("TOKEN")
-PREFIX = "!"
+def get_prefix(bot, message):
+    if not message.guild:
+        return "!"  # DM fallback
+    
+    guild_id = str(message.guild.id)
+    return config_data.get(guild_id, {}).get("prefix", "!")
+
+def get_guild_prefix(message):
+    if not message.guild:
+        return "!"
+    return config_data.get(str(message.guild.id), {}).get("prefix", "!")
+
+
+#owner id
+OWNER_ID = 716836071941603368
 
 # Data files
 DATA_FILE = "aura_data.json"
@@ -69,7 +78,7 @@ HISTORY_FILE = "aura_history.json"
 GLOBAL_FILE = "aura_global.json"
 
 # Battle settings
-BATTLE_COOLDOWN = 3600  # 1 hour between battles
+BATTLE_COOLDOWN = 60 # 1 hour between battles
 BATTLE_STAKE_PERCENT = 0.05  # 5% of lower player's aura at stake
 BATTLE_MIN_STAKE = 5
 BATTLE_MAX_STAKE = 100
@@ -79,134 +88,149 @@ DAILY_BASE_REWARD = 10
 DAILY_STREAK_BONUS = 5  # Extra per day of streak
 DAILY_MAX_STREAK_BONUS = 50  # Cap at day 10
 
+# ============================================================================
+# SHOP ITEMS - FLATTENED STRUCTURE
+# ============================================================================
+
 SHOP_ITEMS = {
-    "titles": {
-        "title_champion": {
-            "name": "Champion",
-            "emoji": "<:champion:YOUR_EMOJI_ID>",
-            "price": 4000,
-            "type": "title",
-            "description": "Show off your champion status!"
-        },
-        "title_legend": {
-            "name": "Legend",
-            "emoji": "<:legend:YOUR_EMOJI_ID>",
-            "price": 7000,
-            "type": "title",
-            "description": "A legendary title for legendary players!"
-        },
-        "title_godlike": {
-            "name": "Godlike",
-            "emoji": "<:godlike:YOUR_EMOJI_ID>",
-            "price": 50000,
-            "type": "title",
-            "description": "The ultimate title of power!"
-        },
-        "title_mystic": {
-            "name": "Mystic",
-            "emoji": "<:mystic:YOUR_EMOJI_ID>",
-            "price": 5500,
-            "type": "title",
-            "description": "Mysterious and powerful!"
-        },
-        "title_warrior": {
-            "name": "Warrior",
-            "emoji": "<:warrior:YOUR_EMOJI_ID>",
-            "price": 2000,
-            "type": "title",
-            "description": "A battle-hardened warrior!"
-        }
+    # TITLES
+    "title_champion": {
+        "name": "Champion",
+        "value": "🏆 Champion",
+        "emoji": "🏆",
+        "price": 4000,
+        "type": "title",
+        "description": "Show off your champion status!"
     },
-    "badges": {
-        "badge_star": {
-            "name": "Star Badge",
-            "emoji": "<:star_badge:YOUR_EMOJI_ID>",
-            "price": 1500,
-            "type": "badge",
-            "description": "A shiny star badge!"
-        },
-        "badge_fire": {
-            "name": "Fire Badge",
-            "emoji": "<:fire_badge:YOUR_EMOJI_ID>",
-            "price": 2000,
-            "type": "badge",
-            "description": "You're on fire!"
-        },
-        "badge_diamond": {
-            "name": "Diamond Badge",
-            "emoji": "<:diamond_badge:YOUR_EMOJI_ID>",
-            "price": 4000,
-            "type": "badge",
-            "description": "Rare and precious!"
-        },
-        "badge_lightning": {
-            "name": "Lightning Badge",
-            "emoji": "<:lightning_badge:YOUR_EMOJI_ID>",
-            "price": 2500,
-            "type": "badge",
-            "description": "Fast and powerful!"
-        },
-        "badge_crown": {
-            "name": "Crown Badge",
-            "emoji": "<:crown_badge:YOUR_EMOJI_ID>",
-            "price": 10000,
-            "type": "badge",
-            "description": "Royalty status!"
-        }
+    "title_legend": {
+        "name": "Legend",
+        "value": "⚡ Legend",
+        "emoji": "⚡",
+        "price": 7000,
+        "type": "title",
+        "description": "A legendary title for legendary players!"
     },
-    "colors": {
-        "color_gold": {
-            "name": "Gold Theme",
-            "emoji": "<:gold_theme:YOUR_EMOJI_ID>",
-            "price": 3000,
-            "type": "color",
-            "color_code": 0xFFD700,
-            "description": "A golden aura card!"
-        },
-        "color_purple": {
-            "name": "Purple Theme",
-            "emoji": "<:purple_theme:YOUR_EMOJI_ID>",
-            "price": 3000,
-            "type": "color",
-            "color_code": 0x9B59B6,
-            "description": "A majestic purple theme!"
-        },
-        "color_red": {
-            "name": "Red Theme",
-            "emoji": "<:red_theme:YOUR_EMOJI_ID>",
-            "price": 3000,
-            "type": "color",
-            "color_code": 0xE74C3C,
-            "description": "A fiery red theme!"
-        },
-        "color_cyan": {
-            "name": "Cyan Theme",
-            "emoji": "<:cyan_theme:YOUR_EMOJI_ID>",
-            "price": 3000,
-            "type": "color",
-            "color_code": 0x00CED1,
-            "description": "A cool cyan theme!"
-        }
+    "title_godlike": {
+        "name": "Godlike",
+        "value": "👑 Godlike",
+        "emoji": "👑",
+        "price": 50000,
+        "type": "title",
+        "description": "The ultimate title of power!"
     },
-    "boosts": {
-        "boost_2x": {
-            "name": "2x Aura Boost",
-            "emoji": "<:boost:YOUR_EMOJI_ID>",
-            "price": 5000,
-            "type": "boost",
-            "duration": 24,
-            "description": "Double aura gains for 24 hours!"
-        }
+    "title_mystic": {
+        "name": "Mystic",
+        "value": "🔮 Mystic",
+        "emoji": "🔮",
+        "price": 5500,
+        "type": "title",
+        "description": "Mysterious and powerful!"
     },
-    "shields": {
-        "shield": {
-            "name": "Battle Shield",
-            "emoji": "<:shield:YOUR_EMOJI_ID>",
-            "price": 25000,
-            "type": "shield",
-            "duration": 24,
-            "description": "Protection from battle losses for 24 hours!"
-        }
+    "title_warrior": {
+        "name": "Warrior",
+        "value": "⚔️ Warrior",
+        "emoji": "⚔️",
+        "price": 2000,
+        "type": "title",
+        "description": "A battle-hardened warrior!"
+    },
+    
+    # BADGES
+    "badge_star": {
+        "name": "Star Badge",
+        "value": "⭐",
+        "emoji": "⭐",
+        "price": 1500,
+        "type": "badge",
+        "description": "A shiny star badge!"
+    },
+    "badge_fire": {
+        "name": "Fire Badge",
+        "value": "🔥",
+        "emoji": "🔥",
+        "price": 2000,
+        "type": "badge",
+        "description": "You're on fire!"
+    },
+    "badge_diamond": {
+        "name": "Diamond Badge",
+        "value": "💎",
+        "emoji": "💎",
+        "price": 4000,
+        "type": "badge",
+        "description": "Rare and precious!"
+    },
+    "badge_lightning": {
+        "name": "Lightning Badge",
+        "value": "⚡",
+        "emoji": "⚡",
+        "price": 2500,
+        "type": "badge",
+        "description": "Fast and powerful!"
+    },
+    "badge_crown": {
+        "name": "Crown Badge",
+        "value": "👑",
+        "emoji": "👑",
+        "price": 10000,
+        "type": "badge",
+        "description": "Royalty status!"
+    },
+    
+    # COLORS
+    "color_gold": {
+        "name": "Gold Theme",
+        "value": 0xFFD700,
+        "emoji": "🟡",
+        "price": 3000,
+        "type": "color",
+        "description": "A golden aura card!"
+    },
+    "color_purple": {
+        "name": "Purple Theme",
+        "value": 0x9B59B6,
+        "emoji": "🟣",
+        "price": 3000,
+        "type": "color",
+        "description": "A majestic purple theme!"
+    },
+    "color_red": {
+        "name": "Red Theme",
+        "value": 0xE74C3C,
+        "emoji": "🔴",
+        "price": 3000,
+        "type": "color",
+        "description": "A fiery red theme!"
+    },
+    "color_cyan": {
+        "name": "Cyan Theme",
+        "value": 0x00CED1,
+        "emoji": "🔵",
+        "price": 3000,
+        "type": "color",
+        "description": "A cool cyan theme!"
+    },
+    
+    # BOOSTS
+    "boost_2x": {
+        "name": "2x Aura Boost",
+        "value": 2,  # Multiplier value
+        "emoji": "⚡",
+        "price": 5000,
+        "type": "boost",
+        "duration": 86400,  # 24 hours in seconds
+        "description": "Double aura gains for 24 hours!"
+    },
+    
+    # SHIELDS
+    "shield": {
+        "name": "Battle Shield",
+        "value": 1,
+        "emoji": "🛡️",
+        "price": 25000,
+        "type": "shield",
+        "duration": 86400,  # 24 hours in seconds
+        "description": "Protection from battle losses for 24 hours!"
     }
 }
 # Tournament settings
@@ -243,7 +267,12 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
+bot = commands.Bot(
+    command_prefix=get_prefix,
+    intents=intents,
+    help_command=None
+)
+
 
 user_message_hashes = {}
 MESSAGE_HISTORY_SIZE = 5
@@ -779,6 +808,8 @@ def contains_hate_speech_patterns(text: str) -> tuple[bool, str]:
         "racism": [
             r'\b(racist|racism)\s+(to|against|towards)\b',
             r'\bwe should (be racist|discriminate|hate)\b',
+            r'\b(n|k)igg(er|a|ah|az)\b', # Catches variations of the slur
+            r'\b(racist|racism)\s+(to|against|towards)\b',
             r'\b(black|brown|white|asian|dalit|scheduled caste) people (are|should)\b',
             r'\b(inferior|superior) race\b',
             r'\b(n|k)igger\b',
@@ -814,71 +845,126 @@ def contains_hate_speech_patterns(text: str) -> tuple[bool, str]:
     return False, ""
 
 # IMPROVED: Better AI aura calculation with robust parsing
-async def calculate_ai_aura_devstral(message: str) -> int:
-    return await asyncio.to_thread(_devstral_sync, message)
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODERATION_MODEL = "qwen2.5:7b"  # or mistral:7b if low RAM
 
-def _devstral_sync(message: str) -> int:
+
+async def calculate_ai_aura_devstral(message: str) -> int:
+    return await asyncio.to_thread(_local_devstral_sync, message)
+
+
+def _local_devstral_sync(message: str) -> int:
+    prompt = f"""
+You are an advanced AI for moderating chat messages for an Indian Discord community (including Hindi, Hinglish, and English).
+
+CRITICAL RULES:
+1. IGNORE casual or cultural profanity in friendly context (e.g., 'bc mast hai', 'bkl theek hai' = NOT toxic)
+2. Context matters: 'tu pagal hai' between friends is a joke, not an insult
+3. FLAG as negative ONLY if:
+   - Message is hostile, harassing, hateful, threatening, or discriminatory, AND
+   - It's clearly targeted at someone (explicit person, @mention, or direct 'tu', 'you', 'tera')
+4. Sarcasm, friendly banter, jokes, and cultural expressions are NOT toxic
+5. Frustration or mild negativity without targeting is neutral (0)
+
+HATE SPEECH DETECTION:
+- Racism, sexism, homophobia, religious hatred = ALWAYS negative (-4 or -5)
+- Extremism, genocide advocacy, discrimination = ALWAYS negative (-4 or -5)
+
+Score logic (STRICT):
+- Positive (+1 to +5): ONLY for helpful, encouraging, constructive, funny, or engaging messages
+- Neutral (0): Casual chat, questions, statements without strong sentiment, spam, gibberish
+- Negative (-1 to -5): Only for clear targeted toxicity, abuse, hate, or threats
+
+Return ONLY an integer between -5 and +5.
+
+Message:
+\"\"\"{message}\"\"\"
+"""
+
     try:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are an advanced AI for moderating chat messages for an Indian Discord community (including Hindi, Hinglish, and English).\n"
-                    "You must UNDERSTAND Indian slang and Hinglish culture.\n\n"
-                    "CRITICAL RULES:\n"
-                    "1. IGNORE casual or cultural profanity in friendly context (e.g., 'bc mast hai', 'bkl theek hai' = NOT toxic)\n"
-                    "2. Context matters: 'tu pagal hai' between friends is a joke, not an insult\n"
-                    "3. FLAG as negative ONLY if:\n"
-                    "   - Message is hostile, harassing, hateful, threatening, or discriminatory, AND\n"
-                    "   - It's clearly targeted at someone (explicit person, @mention, or direct 'tu', 'you', 'tera')\n"
-                    "4. Sarcasm, friendly banter, jokes, and cultural expressions are NOT toxic\n"
-                    "5. Frustration or mild negativity without targeting is neutral (0)\n\n"
-                    "HATE SPEECH DETECTION:\n"
-                    "- Racism, sexism, homophobia, religious hatred = ALWAYS negative (-4 or -5)\n"
-                    "- Extremism, genocide advocacy, discrimination = ALWAYS negative (-4 or -5)\n\n"
-                    "Score logic:\n"
-                    "- Positive (+1 to +5): Helpful, encouraging, constructive, funny, engaging\n"
-                    "- Neutral (0): Casual chat, questions, statements without strong sentiment\n"
-                    "- Negative (-1 to -5): Only for clear targeted toxicity, abuse, hate, or threats\n"
-                    "  - -1 to -2: Mild targeted negativity\n"
-                    "  - -3 to -4: Strong abuse, harassment, or targeted hate\n"
-                    "  - -5: Severe hate speech, threats, or extreme discrimination\n\n"
-                    "When unsure, err on the side of neutral (0) or positive.\n"
-                    "Return ONLY an integer between -5 and +5."
-                ),
+        r = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODERATION_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_predict": 8
+                }
             },
-            {"role": "user", "content": message}
-        ]
-        response = openrouter_client.chat.completions.create(
-            model="mistralai/devstral-2512",
-            messages=messages,
-            temperature=0.3,
-            max_tokens=8
+            timeout=15
         )
-        raw = ""
-        try:
-            raw = response.choices[0].message.content.strip()
-        except Exception:
-            raw = str(response)
-        
-        print(f"[DEVSTRAL RAW] input='{message[:80]}' response='{raw}'")
-        
-        # Extract first token that looks like an int
-        first_token = raw.split()
-        if not first_token:
-            return 0
-        token = first_token[0].strip()
+
+        r.raise_for_status()
+        raw = r.json().get("response", "").strip()
+
+        print(f"[LOCAL AI RAW] input='{message[:80]}' response='{raw}'")
+
+        # Parse first integer
+        token = raw.split()[0]
         token = re.sub(r'^[^\-0-9]+|[^\-0-9].*$', '', token)
-        try:
-            score = int(token)
-        except Exception:
-            print(f"[DEVSTRAL PARSE ERROR] could not parse token='{token}' from raw='{raw}'")
-            return 0
-        
+
+        score = int(token)
         return max(-5, min(score, 5))
+
     except Exception as e:
-        print("Devstral error:", e)
+        print("[LOCAL DEVSTRAL ERROR]", e)
         return 0
+
+    
+OLLAMA_ROAST_MODEL = "mistral:7b" 
+
+
+async def generate_ai_roast(roaster, target, message: str, *, temperature=0.65, max_tokens=80) -> str:
+    return await asyncio.to_thread(_local_roast_sync, target, message, temperature, max_tokens)
+
+
+def _local_roast_sync(target, message: str, temperature: float, max_tokens: int) -> str:
+    prompt = f"""
+You are a BRUTAL but hilarious Discord roast comic.\n
+you are a roast feature in a discord bot whose name is auraxis.\n
+Rules:\n
+1. Roast ONLY the message content, NEVER personal traits/appearance\n
+2. Be savage but clever — think stand-up comedian, not playground bully\n
+3. Use wit, sarcasm, analogies — NOT just insults\n
+8. you can use slurs, never be cringe \n
+4. 1-2 sentences MAX, punchy delivery\n
+5. Sound like a smart friend roasting another friend\n
+6. NEVER mention being an AI or break character\n
+7. If the message is wholesome, roast their attempt at being wholesome\n\n
+Examples of good roasts:\n"
+- 'That take is so cold it gave my CPU frostbite'\n
+- 'Bold of you to say that with your whole chest'\n
+- 'I've seen better opinions on fortune cookies'
+
+Roast this message from {target.display_name}:
+\"\"\"{message}\"\"\"
+"""
+
+    try:
+        r = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_ROAST_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens
+                }
+            },
+            timeout=20
+        )
+
+        r.raise_for_status()
+        return r.json().get("response", "").strip()
+
+    except Exception as e:
+        print("[LOCAL ROAST ERROR]", e)
+        return "Even my roast engine refused to process that take 💀"
+
+
 
 # IMPROVED: Better toxic decision logic
 def evaluate_toxic_decision(text: str, ai_score: int, message_obj=None) -> tuple[bool, int, dict]:
@@ -924,7 +1010,10 @@ def evaluate_toxic_decision(text: str, ai_score: int, message_obj=None) -> tuple
             negative_votes += 1
         if ai_score is not None and ai_score < 0:
             negative_votes += 1
-        
+        # If AI detects severe abuse (-4 or -5), trigger penalty immediately
+        if ai_score is not None and ai_score <= -4:
+            print(f"[SEVERE AI VETO] Triggering immediate penalty for score {ai_score}")
+            return True, ai_score, {**explanations, "veto": True}
         # Lower threshold: 2/3 votes OR semantic+targeted combo
         if negative_votes >= 2 or (toxic_sem and targeted):
             allowed = True
@@ -943,10 +1032,58 @@ def evaluate_toxic_decision(text: str, ai_score: int, message_obj=None) -> tuple
     print(f"[TOXIC DECISION] ai={ai_score} sem={sem_cls} targeted={targeted} votes={negative_votes} allowed={allowed} penalty={penalty}")
 
     return allowed, penalty, explanations
+def apply_aura(user_id: str, delta: int, allow_negative: bool = False):
+    """
+    Safely update aura.
+    
+    delta: +ve or -ve
+    allow_negative: True ONLY for toxicity
+    """
+    current = aura_data.get(user_id, 0)
+    new = current + delta
+
+    if not allow_negative and new < 0:
+        new = 0
+
+    aura_data[user_id] = new
+
+    # Optional debug (remove later)
+    print(f"[AURA] user={user_id} {current} -> {new} (delta={delta})")
 
 # ============================================================================
 # AURA BATTLES
 # ============================================================================
+import math
+from datetime import datetime, timedelta
+
+def aura_power(aura: int) -> float:
+    """Convert aura to power with diminishing returns."""
+    return math.sqrt(max(aura, 0))
+
+
+def battle_score(aura: int, boost: bool = False) -> tuple[float, float]:
+    """
+    Returns (final_score, rng_factor)
+    """
+    base = aura_power(aura)
+
+    # Small RNG (±12%)
+    rng = random.uniform(0.88, 1.12)
+
+    # Optional boost bonus
+    boost_mult = 1.1 if boost else 1.0
+
+    final = base * rng * boost_mult
+    return final, rng
+
+def resolve_item_id(input_name: str):
+    input_name = input_name.lower().replace(" ", "")
+    for item_id, item in SHOP_ITEMS.items():
+        if input_name == item_id.lower().replace("_", ""):
+            return item_id
+        if input_name == item["name"].lower().replace(" ", ""):
+            return item_id
+    return None
 
 def get_battle_cooldown(user_id: str) -> int:
     """Get remaining cooldown in seconds for a user's next battle."""
@@ -967,61 +1104,66 @@ def calculate_battle_stake(aura1: int, aura2: int) -> int:
     stake = int(lower_aura * BATTLE_STAKE_PERCENT)
     return max(BATTLE_MIN_STAKE, min(stake, BATTLE_MAX_STAKE))
 
-def simulate_battle(aura1: int, aura2: int) -> tuple[int, dict]:
+def simulate_battle(aura1: int, aura2: int):
     """
-    Simulate a battle between two players.
-    Returns: (winner: 1 or 2, battle_details: dict)
-    """
-    # Base win chance is 50/50, but higher aura gives slight advantage
-    total_aura = aura1 + aura2
-    if total_aura == 0:
-        chance1 = 0.5
-    else:
-        # Higher aura = higher chance, but capped at 70%
-        raw_chance = aura1 / total_aura
-        chance1 = 0.3 + (raw_chance * 0.4)  # Range: 30% to 70%
-    
-    # Random events that can affect the battle
-    events = []
-    
-    # Critical hit chance (10%)
-    if random.random() < 0.1:
-        if random.random() < 0.5:
-            events.append(("crit", 1, "landed a **CRITICAL HIT!** 💥"))
-            chance1 += 0.15
-        else:
-            events.append(("crit", 2, "landed a **CRITICAL HIT!** 💥"))
-            chance1 -= 0.15
-    
-    # Dodge chance (8%)
-    if random.random() < 0.08:
-        if random.random() < 0.5:
-            events.append(("dodge", 1, "**DODGED** the attack! 🌀"))
-            chance1 += 0.1
-        else:
-            events.append(("dodge", 2, "**DODGED** the attack! 🌀"))
-            chance1 -= 0.1
-    
-    # Aura surge (5%)
-    if random.random() < 0.05:
-        if random.random() < 0.5:
-            events.append(("surge", 1, "unleashed an **AURA SURGE!** ⚡"))
-            chance1 += 0.2
-        else:
-            events.append(("surge", 2, "unleashed an **AURA SURGE!** ⚡"))
-            chance1 -= 0.2
-    
-    # Clamp chance
-    chance1 = max(0.15, min(0.85, chance1))
-    
-    # Determine winner
-    winner = 1 if random.random() < chance1 else 2
-    
-    return winner, {
-        "events": events,
-        "chance1": chance1,
-        "chance2": 1 - chance1
+    Returns:
+    winner_num: 1 or 2
+    details: {
+        chance1: float,
+        chance2: float,
+        events: list[(round, player_num, text)]
     }
+    """
+
+    # ── 1️⃣ Convert aura → power (diminishing returns) ──
+    p1_power = math.sqrt(max(aura1, 0))
+    p2_power = math.sqrt(max(aura2, 0))
+
+    # ── 2️⃣ Calculate win probabilities (skill-dominant) ──
+    total_power = p1_power + p2_power
+    chance1 = p1_power / total_power
+    chance2 = p2_power / total_power
+
+    # ── 3️⃣ Small controlled RNG (±12%) ──
+    rng1 = random.uniform(0.88, 1.12)
+    rng2 = random.uniform(0.88, 1.12)
+
+    score1 = p1_power * rng1
+    score2 = p2_power * rng2
+
+    # ── 4️⃣ Decide winner ──
+    if score1 > score2:
+        winner = 1
+        loser = 2
+    else:
+        winner = 2
+        loser = 1
+
+    # ── 5️⃣ Generate FLAVOR events (post-decision) ──
+    events = []
+    rounds = random.randint(2, 4)
+
+    action_pool = [
+        "lands a heavy strike!",
+        "dodges swiftly and counters!",
+        "channels aura into a powerful blast!",
+        "overpowers the opponent!",
+        "breaks through defenses!"
+    ]
+
+    for r in range(1, rounds + 1):
+        if random.random() < 0.65:
+            events.append((r, winner, random.choice(action_pool)))
+        else:
+            events.append((r, loser, "puts up a strong resistance!"))
+
+    # ── 6️⃣ Return EXACT structure your command expects ──
+    return winner, {
+        "chance1": chance1,
+        "chance2": chance2,
+        "events": events
+    }
+
 
 @bot.command()
 @commands.cooldown(1, 10, commands.BucketType.user)
@@ -1043,14 +1185,14 @@ async def aurabattle(ctx, opponent: discord.Member):
     # Check cooldowns
     challenger_cd = get_battle_cooldown(challenger_id)
     if challenger_cd > 0:
-        minutes = challenger_cd // 60
-        await ctx.send(f"⏰ You're still recovering! Battle again in **{minutes}** minutes.")
+        seconds = challenger_cd
+        await ctx.send(f"⏰ You're still recovering! Battle again in **{seconds}** seconds.")
         return
     
     opponent_cd = get_battle_cooldown(opponent_id)
     if opponent_cd > 0:
-        minutes = opponent_cd // 60
-        await ctx.send(f"⏰ **{opponent.display_name}** is still recovering! They can battle in **{minutes}** minutes.")
+        seconds = opponent_cd 
+        await ctx.send(f"⏰ **{opponent.display_name}** is still recovering! They can battle in **{seconds}** seconds.")
         return
     
     # Check shield
@@ -1204,7 +1346,7 @@ async def aurabattle(ctx, opponent: discord.Member):
         
     except asyncio.TimeoutError:
         await ctx.send(f"⏰ Battle challenge expired. **{opponent.display_name}** didn't respond in time.")
-
+    
 @bot.tree.command(name="aurabattle", description="Challenge someone to an aura battle!")
 async def aurabattle_slash(interaction: discord.Interaction, opponent: discord.Member):
     """Slash command version of aura battle."""
@@ -1767,7 +1909,7 @@ def get_user_inventory(user_id: str) -> dict:
     return shop_data.get(user_id, {
         "titles": [],
         "badges": [],
-        "colors": [],
+        "colors": [],    
         "active_title": None,
         "active_badge": None,
         "active_color": None,
@@ -1804,7 +1946,7 @@ def purchase_item(user_id: str, item_id: str) -> tuple[bool, str]:
         # Add to inventory
         inventory.setdefault(owned_key, []).append(item_id)
     
-    elif item_type == "multiplier":
+    elif item_type == "boost":
         # Temporary boost - extend if already active
         current_expires = inventory.get("multiplier_expires", 0)
         if time.time() < current_expires:
@@ -1943,9 +2085,11 @@ async def shop_slash(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 @bot.command()
-async def buy(ctx, item_id: str = None):
+async def buy(ctx, *, item_name: str = None):
     """Buy an item from the shop."""
-    if item_id is None:
+
+    # ── 1️⃣ Handle missing item name ──
+    if not item_name:
         embed = discord.Embed(
             title="🛒 How to Buy",
             description="Use `!buy <item_id>` to purchase an item!\n\nExample: `!buy title_champion`",
@@ -1968,111 +2112,152 @@ async def buy(ctx, item_id: str = None):
         )
         await ctx.send(embed=embed)
         return
-    
+
+    # ── 2️⃣ Resolve item ID FIRST ──
+    item_id = resolve_item_id(item_name)
+    if not item_id:
+        await ctx.send("❌ Item not found. Use `!shop` to see valid items.")
+        return
+
+    # ── 3️⃣ Fetch item safely ──
+    item = SHOP_ITEMS.get(item_id)
+    if not item:
+        await ctx.send("❌ Item data is corrupted or missing.")
+        return
+
     user_id = str(ctx.author.id)
     user_aura = aura_data.get(user_id, 0)
-    
-    # Check if item exists
-    item = None
-    for category in SHOP_ITEMS.values():
-        if item_id in category:
-            item = category[item_id]
-            break
-    
-    if not item:
-        await ctx.send(f"❌ Item `{item_id}` not found! Use `!shop` to see available items.")
-        return
-    
-    # Check if user can afford it
+
+    # ── 4️⃣ Affordability check ──
     if user_aura < item["price"]:
-        await ctx.send(f"❌ You need **{item['price']}** aura but only have **{user_aura}**!")
+        await ctx.send(
+            f"❌ You need **{item['price']}** aura but only have **{user_aura}**!"
+        )
         return
-    
-    # Check if already owned (for non-consumables)
-    user_inv = inventory_data.setdefault(user_id, {"items": [], "equipped": {}})
-    
-    if item["type"] in ["title", "badge", "color"] and item_id in user_inv.get("items", []):
+
+    # ── 5️⃣ Inventory setup ──
+    user_inv = shop_data.setdefault(user_id, {
+        "titles": [],
+        "badges": [],
+        "colors": [],
+        "active_title": None,
+        "active_badge": None,
+        "active_color": None,
+        "multiplier_expires": 0,
+        "multiplier_value": 1,
+        "shield_expires": 0
+    })
+
+
+# ── 6️⃣ Ownership check (non-consumables) ──
+    if item["type"] == "title" and item_id in user_inv["titles"]:
         await ctx.send(f"❌ You already own **{item['name']}**!")
         return
-    
-    # Deduct aura
-    aura_data[user_id] -= item["price"]
-    save_data(aura_data)
-    
-    # Handle different item types
+    elif item["type"] == "badge" and item_id in user_inv["badges"]:
+        await ctx.send(f"❌ You already own **{item['name']}**!")
+        return
+    elif item["type"] == "color" and item_id in user_inv["colors"]:
+        await ctx.send(f"❌ You already own **{item['name']}**!")
+        return
+
+    # ── 8️⃣ Handle item types ──
     if item["type"] == "boost":
         expiry = datetime.now() + timedelta(hours=24)
-        user_inv["active_boost"] = expiry.isoformat()
-        await ctx.send(f"✅ Purchased **{item['name']}**! 2x aura gains for 24 hours! 🚀")
-    
+        user_inv["multiplier_expires"] = expiry.timestamp()
+        user_inv["multiplier_value"] = 2
+        await ctx.send(
+            f"✅ Purchased **{item['name']}**! 2x aura gains for 24 hours! 🚀"
+        )
+
     elif item["type"] == "shield":
         expiry = datetime.now() + timedelta(hours=24)
-        user_inv["active_shield"] = expiry.isoformat()
-        await ctx.send(f"✅ Purchased **{item['name']}**! Protected from battle losses for 24 hours! 🛡️")
-    
+        user_inv["shield_expires"] = expiry.timestamp()
+        await ctx.send(
+            f"✅ Purchased **{item['name']}**! Protected from battle losses for 24 hours! 🛡️"
+        )
+
     else:
-        if "items" not in user_inv:
-            user_inv["items"] = []
-        user_inv["items"].append(item_id)
-        await ctx.send(f"✅ Purchased **{item['name']}**! Use `!equip {item_id}` to equip it!")
-    
-    inventory_data[user_id] = user_inv
-    save_inventory()
+        if item["type"] == "title":
+            user_inv["titles"].append(item_id)
+        elif item["type"] == "badge":
+            user_inv["badges"].append(item_id)
+        elif item["type"] == "color":
+            user_inv["colors"].append(item_id)
+
+        await ctx.send(
+            f"✅ Purchased **{item['name']}**! Use `!equip {item_id}` to equip it!"
+        )
+
+    # ── 9️⃣ Save inventory ──
+    shop_data[user_id] = user_inv
+    save_json_safe(SHOP_FILE, shop_data)
+
 
 @bot.command()
-async def equip(ctx, item_id: str = None):
+async def equip(ctx, *, item_name: str = None):
     """Equip an item you own."""
-    if item_id is None:
+
+    if not item_name:
         embed = discord.Embed(
             title="👕 How to Equip",
-            description="Use `!equip <item_id>` to equip an item!\n\nExample: `!equip title_champion`",
+            description="Use `equip <item>` to equip something you own.\n\nExample: `equip Godlike`",
             color=0x9B59B6
         )
         embed.add_field(
-            name="📦 View Your Items",
-            value="Use `!inventory` to see items you own.",
-            inline=False
-        )
-        embed.add_field(
-            name="💡 Example",
-            value=(
-                "`!equip title_champion` - Equip Champion title\n"
-                "`!equip badge_star` - Equip Star badge\n"
-                "`!equip color_gold` - Equip Gold color"
-            ),
+            name="📦 Your Inventory",
+            value="Use `inventory` to see items you own.",
             inline=False
         )
         await ctx.send(embed=embed)
         return
-    
+
     user_id = str(ctx.author.id)
-    user_inv = inventory_data.get(user_id, {"items": [], "equipped": {}})
-    
-    # Check if user owns the item
-    if item_id not in user_inv.get("items", []):
-        await ctx.send(f"❌ You don't own `{item_id}`! Use `!shop` to buy it first.")
+    user_inv = shop_data.get(user_id)
+
+    if not user_inv:
+        await ctx.send("❌ You don’t own any items yet.")
         return
-    
-    # Find the item
-    item = None
-    for category in SHOP_ITEMS.values():
-        if item_id in category:
-            item = category[item_id]
-            break
-    
+
+    # 🔑 Resolve name → item_id
+    item_id = resolve_item_id(item_name)
+    if not item_id:
+        await ctx.send(f"❌ Item `{item_name}` not found!")
+        return
+
+    item = SHOP_ITEMS.get(item_id)
     if not item:
-        await ctx.send(f"❌ Item `{item_id}` not found!")
+        await ctx.send("❌ Item data missing.")
         return
+
+    item_type = item["type"]
+
+    # ✅ Ownership checks (THIS IS THE KEY FIX)
+    if item_type == "title" and item_id not in user_inv["titles"]:
+        await ctx.send(f"❌ You don't own **{item['name']}**!")
+        return
+    if item_type == "badge" and item_id not in user_inv["badges"]:
+        await ctx.send(f"❌ You don't own **{item['name']}**!")
+        return
+    if item_type == "color" and item_id not in user_inv["colors"]:
+        await ctx.send(f"❌ You don't own **{item['name']}**!")
+        return
+
+    # 🎯 Equip
+    if item_type == "title":
+        user_inv["active_title"] = item_id
+        await ctx.send(f"👑 Equipped title **{item['name']}**!")
+
+    elif item_type == "badge":
+        user_inv["active_badge"] = item_id
+        await ctx.send(f"🏅 Equipped badge **{item['name']}**!")
+
+    elif item_type == "color":
+        user_inv["active_color"] = item_id
+        await ctx.send(f"🎨 Equipped color **{item['name']}**!")
+
+    shop_data[user_id] = user_inv
+    save_json_safe(SHOP_FILE, shop_data)
     
-    # Equip the item
-    if "equipped" not in user_inv:
-        user_inv["equipped"] = {}
-    
-    user_inv["equipped"][item["type"]] = item_id
-    inventory_data[user_id] = user_inv
-    save_inventory()
-    
-    await ctx.send(f"✅ Equipped **{item['name']}**! {item.get('emoji', '✨')}")
 
 @bot.tree.command(name="equip", description="Equip an item you own")
 @app_commands.describe(item_id="The ID of the item to equip (use /inventory to see your items)")
@@ -2487,237 +2672,1787 @@ async def tournament_check_task():
 # ============================================================================
 # AURA CARD / PROFILE
 # ============================================================================
+import math
+import random
 
-async def generate_aura_card_image(member: discord.Member, aura: int, rank: str, inventory: dict, stats: dict) -> BytesIO:
-    """Generate an image aura card using PIL."""
+
+# ============================================================================
+# ANIMATION HELPER FUNCTIONS
+# ============================================================================
+def draw_text_with_stroke(draw, pos, text, font, fill, stroke_fill=(0,0,0), stroke=4):
+    x, y = pos
+    for dx in range(-stroke, stroke + 1):
+        for dy in range(-stroke, stroke + 1):
+            if dx != 0 or dy != 0:
+                draw.text((x + dx, y + dy), text, font=font, fill=stroke_fill)
+    draw.text((x, y), text, font=font, fill=fill)
+
+def pulse(frame: int, total_frames: int, min_val: float, max_val: float) -> float:
+    """Smooth sine wave pulse."""
+    t = (frame / total_frames) * 2 * math.pi
+    return min_val + (max_val - min_val) * (0.5 + 0.5 * math.sin(t))
+
+def ease_out_cubic(t: float) -> float:
+    """Smooth easing for progress bar."""
+    return 1 - pow(1 - t, 3)
+
+def ease_in_out_sine(t: float) -> float:
+    """Smooth easing for floating elements."""
+    return -(math.cos(math.pi * t) - 1) / 2
+
+def lerp(a: float, b: float, t: float) -> float:
+    """Linear interpolation."""
+    return a + (b - a) * t
+
+def get_particle_positions(frame: int, total_frames: int, count: int, width: int, height: int, seed: int) -> list:
+    """Generate animated particle positions."""
+    random.seed(seed)
+    particles = []
     
+    for i in range(count):
+        # Base position
+        base_x = random.randint(50, width - 50)
+        base_y = random.randint(50, height - 50)
+        
+        # Animation offset (floating up and fading)
+        phase = (frame / total_frames + i / count) % 1.0
+        
+        # Float upward
+        y_offset = -phase * 100
+        
+        # Slight horizontal drift
+        x_offset = math.sin(phase * math.pi * 2 + i) * 20
+        
+        # Fade in and out
+        if phase < 0.2:
+            alpha = int(phase / 0.2 * 150)
+        elif phase > 0.8:
+            alpha = int((1 - phase) / 0.2 * 150)
+        else:
+            alpha = 150
+        
+        # Size variation
+        size = random.randint(2, 6)
+        
+        particles.append({
+            "x": int(base_x + x_offset),
+            "y": int(base_y + y_offset),
+            "alpha": alpha,
+            "size": size
+        })
+    
+    return particles
+
+
+# ============================================================================
+# MAIN ANIMATED CARD FUNCTION
+# ============================================================================
+
+async def generate_animated_aura_card_image(
+    member: discord.Member,
+    aura: int,
+    rank: str,
+    inventory: dict,
+    stats: dict
+) -> BytesIO:
+    """
+    Generate a smooth, visually impressive animated aura card.
+    """
+
     if not PIL_AVAILABLE:
         return None
+
+    try:
+        # =============================
+        # ANIMATION SETTINGS
+        # =============================
+        FRAMES = 36              # More frames = smoother
+        FRAME_TIME = 50          # ms per frame (~20 FPS)
+        WIDTH, HEIGHT = 1600, 800
+        
+        frames = []
+        theme = get_aura_theme(aura, inventory)
+        
+        # =============================
+        # FONTS - BIGGER FOR READABILITY
+        # =============================
+        try:
+            FONT_AURA = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 260  # Bigger!
+            )
+            FONT_TITLE = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 120
+            )
+            FONT_SUB = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 92
+            )
+            FONT_BODY = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 72
+            )
+            FONT_SMALL = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 60
+            )
+        except:
+            FONT_AURA = FONT_TITLE = FONT_SUB = FONT_BODY = FONT_SMALL = ImageFont.load_default()
+
+        # Colors
+        TEXT_WHITE = (255, 255, 255)
+        TEXT_LIGHT = (220, 220, 220)
+        TEXT_GRAY = (160, 160, 160)
+        TEXT_DARK = (100, 100, 100)
+
+        # =============================
+        # STATIC ELEMENTS (Fetch once)
+        # =============================
+        
+        # Avatar image
+        avatar_img = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(str(member.display_avatar.url)) as resp:
+                    avatar_data = await resp.read()
+            avatar_img = Image.open(BytesIO(avatar_data)).convert("RGBA")
+            avatar_img = avatar_img.resize((300, 300), Image.Resampling.LANCZOS)
+        except:
+            avatar_img = None
+
+        # Circular mask for avatar
+        avatar_mask = Image.new("L", (300, 300), 0)
+        mask_draw = ImageDraw.Draw(avatar_mask)
+        mask_draw.ellipse((0, 0, 300, 300), fill=255)
+
+        # Stats
+        wins = stats.get("wins", 0)
+        losses = stats.get("losses", 0)
+        total_battles = wins + losses
+        winrate = (wins / total_battles) if total_battles > 0 else 0
+        streak = stats.get("streak", 0)
+        weekly = stats.get("weekly_gain", 0)
+        messages = stats.get("total_messages", 0)
+        server_rank = stats.get("server_rank", "?")
+
+        # Progress calculation
+        current_tier = get_current_tier_threshold(aura)
+        next_tier = get_next_tier_threshold(aura)
+        progress = 0
+        if next_tier > current_tier:
+            progress = (aura - current_tier) / (next_tier - current_tier)
+
+        # =============================
+        # GENERATE EACH FRAME
+        # =============================
+        
+        for frame_idx in range(FRAMES):
+            t = frame_idx / FRAMES  # 0.0 to 1.0
+            
+            # Create fresh canvas
+            img = Image.new("RGBA", (WIDTH, HEIGHT), (15, 12, 20))
+            draw = ImageDraw.Draw(img, "RGBA")
+
+            # -----------------------------
+            # ANIMATED BACKGROUND
+            # -----------------------------
+            
+            # Subtle gradient with moving highlight
+            highlight_x = int(WIDTH * (0.3 + 0.4 * math.sin(t * 2 * math.pi)))
+            for y in range(HEIGHT):
+                for x in range(0, WIDTH, 4):  # Skip pixels for performance
+                    dist = math.sqrt((x - highlight_x)**2 + (y - HEIGHT//2)**2)
+                    brightness = max(0, 30 - dist * 0.03)
+                    
+                    r = int(theme["primary"][0] * 0.1 + brightness * 0.3)
+                    g = int(theme["primary"][1] * 0.1 + brightness * 0.3)
+                    b = int(theme["primary"][2] * 0.1 + brightness * 0.3)
+                    
+                    draw.rectangle([(x, y), (x + 4, y + 1)], fill=(r, g, b))
+
+            # Floating particles
+            particles = get_particle_positions(frame_idx, FRAMES, 25, WIDTH, HEIGHT, aura)
+            for p in particles:
+                if 0 < p["y"] < HEIGHT:
+                    draw.ellipse(
+                        [(p["x"] - p["size"], p["y"] - p["size"]),
+                         (p["x"] + p["size"], p["y"] + p["size"])],
+                        fill=(*theme["primary"], p["alpha"])
+                    )
+
+            # -----------------------------
+            # AVATAR WITH ANIMATED GLOW
+            # -----------------------------
+            AVATAR_X, AVATAR_Y = 100, 140
+            AVATAR_SIZE = 300
+            
+            # Pulsing glow rings
+            glow_intensity = pulse(frame_idx, FRAMES, 0.6, 1.0)
+            
+            for ring in range(4, 0, -1):
+                ring_size = AVATAR_SIZE + ring * 25
+                ring_alpha = int(80 * glow_intensity * (1 - ring / 5))
+                
+                # Draw glow ellipse
+                glow_x = AVATAR_X + (AVATAR_SIZE - ring_size) // 2
+                glow_y = AVATAR_Y + (AVATAR_SIZE - ring_size) // 2
+                
+                draw.ellipse(
+                    [(glow_x, glow_y), (glow_x + ring_size, glow_y + ring_size)],
+                    fill=(*theme["primary"], ring_alpha)
+                )
+
+            # Avatar image
+            if avatar_img:
+                img.paste(avatar_img, (AVATAR_X, AVATAR_Y), avatar_mask)
+            else:
+                draw.ellipse(
+                    [(AVATAR_X, AVATAR_Y), (AVATAR_X + AVATAR_SIZE, AVATAR_Y + AVATAR_SIZE)],
+                    fill=(60, 60, 60)
+                )
+
+            # Avatar border (animated color shift)
+            border_hue_shift = int(30 * math.sin(t * 2 * math.pi))
+            border_color = (
+                min(255, theme["primary"][0] + border_hue_shift),
+                theme["primary"][1],
+                max(0, theme["primary"][2] - border_hue_shift)
+            )
+            draw.ellipse(
+                [(AVATAR_X - 4, AVATAR_Y - 4), 
+                 (AVATAR_X + AVATAR_SIZE + 4, AVATAR_Y + AVATAR_SIZE + 4)],
+                outline=border_color,
+                width=6
+            )
+
+            # Username
+            name_y = AVATAR_Y + AVATAR_SIZE + 35
+            username = member.display_name[:14]
+            
+            # Shadow
+            draw.text((AVATAR_X + 3, name_y + 3), username, fill=(0, 0, 0, 180), font=FONT_TITLE)
+            # Main text
+            draw.text((AVATAR_X, name_y), username, fill=TEXT_WHITE, font=FONT_TITLE)
+
+            # Title/Badge (if equipped)
+            badge_text = get_title_badge_text(inventory)
+            if badge_text:
+                draw.text((AVATAR_X, name_y + 80), badge_text, fill=theme["primary"], font=FONT_BODY)
+
+            # -----------------------------
+            # MAIN PANEL
+            # -----------------------------
+            PANEL_X, PANEL_Y = 520, 60
+            PANEL_W, PANEL_H = 1020, 680
+
+            # Panel background
+            panel = Image.new("RGBA", (PANEL_W, PANEL_H), (0, 0, 0, 0))
+            panel_draw = ImageDraw.Draw(panel, "RGBA")
+            
+            # Gradient background
+            for y in range(PANEL_H):
+                alpha = int(180 + 20 * (y / PANEL_H))
+                panel_draw.line([(0, y), (PANEL_W, y)], fill=(20, 15, 30, alpha))
+            
+            # Animated border glow
+            border_glow = int(pulse(frame_idx, FRAMES, 100, 200))
+            panel_draw.rounded_rectangle(
+                [(0, 0), (PANEL_W - 1, PANEL_H - 1)],
+                radius=30,
+                outline=(*theme["primary"], border_glow),
+                width=4
+            )
+            
+            img.paste(panel, (PANEL_X, PANEL_Y), panel)
+
+            # -----------------------------
+            # AURA NUMBER (ANIMATED)
+            # -----------------------------
+            AURA_X = PANEL_X + 60
+            AURA_Y = PANEL_Y + 50
+            aura_text = f"{aura:,}"
+
+            # Animated glow layers
+            glow_alpha = int(pulse(frame_idx, FRAMES, 60, 160))
+            glow_scale = pulse(frame_idx, FRAMES, 0.8, 1.2)
+            
+            for i in range(8, 0, -1):
+                offset = int(i * glow_scale)
+                layer_alpha = int(glow_alpha * (1 - i / 10))
+                draw.text(
+                    (AURA_X + offset, AURA_Y + offset),
+                    aura_text,
+                    fill=(*theme["primary"], layer_alpha),
+                    font=FONT_AURA
+                )
+
+            # Main aura text
+            draw_text_with_stroke(
+                draw,
+                (AURA_X, AURA_Y),
+                aura_text,
+                FONT_AURA,
+                TEXT_WHITE,
+                stroke_fill=(0, 0, 0),
+                stroke=6
+)
+            # Label
+            draw.text(
+                (AURA_X + 480, AURA_Y + 50),
+                "⚡ AURA POWER",
+                fill=TEXT_LIGHT,
+                font=FONT_SUB
+            )
+
+            # -----------------------------
+            # ANIMATED PROGRESS BAR
+            # -----------------------------
+            BAR_X = AURA_X
+            BAR_Y = AURA_Y + 180
+            BAR_W = 820
+            BAR_H = 40
+
+            if next_tier > current_tier:
+                # Animated fill (ease out for smooth stop)
+                anim_progress = progress * ease_out_cubic(min(1.0, t * 2))
+                
+                # Background
+                draw.rounded_rectangle(
+                    [(BAR_X, BAR_Y), (BAR_X + BAR_W, BAR_Y + BAR_H)],
+                    radius=BAR_H // 2,
+                    fill=(40, 35, 50)
+                )
+
+                # Fill with gradient effect
+                fill_width = int(BAR_W * anim_progress)
+                if fill_width > 10:
+                    # Animated shimmer
+                    shimmer_x = int((t * 2 % 1.0) * fill_width)
+                    
+                    for x in range(fill_width):
+                        # Gradient from primary to secondary
+                        ratio = x / fill_width
+                        r = int(lerp(theme["primary"][0], theme["secondary"][0], ratio))
+                        g = int(lerp(theme["primary"][1], theme["secondary"][1], ratio))
+                        b = int(lerp(theme["primary"][2], theme["secondary"][2], ratio))
+                        
+                        # Add shimmer highlight
+                        if abs(x - shimmer_x) < 30:
+                            shimmer_boost = int(50 * (1 - abs(x - shimmer_x) / 30))
+                            r = min(255, r + shimmer_boost)
+                            g = min(255, g + shimmer_boost)
+                            b = min(255, b + shimmer_boost)
+                        
+                        draw.line(
+                            [(BAR_X + x, BAR_Y + 2), (BAR_X + x, BAR_Y + BAR_H - 2)],
+                            fill=(r, g, b)
+                        )
+
+                # Border
+                draw.rounded_rectangle(
+                    [(BAR_X, BAR_Y), (BAR_X + BAR_W, BAR_Y + BAR_H)],
+                    radius=BAR_H // 2,
+                    outline=(*theme["primary"], 150),
+                    width=2
+                )
+
+                # Progress text
+                draw.text(
+                    (BAR_X, BAR_Y + 50),
+                    f"{aura - current_tier:,} / {next_tier - current_tier:,} to next tier",
+                    fill=TEXT_GRAY,
+                    font=FONT_BODY
+                )
+
+            # -----------------------------
+            # RANK & STATS
+            # -----------------------------
+            INFO_Y = BAR_Y + 120
+
+            # Rank with icon
+            rank_icon = get_rank_icon(aura)
+            draw.text(
+                (AURA_X, INFO_Y),
+                f"{rank_icon} {rank.upper()}",
+                fill=TEXT_WHITE,
+                font=FONT_SUB
+            )
+
+            # Server rank
+            draw.text(
+                (AURA_X + 400, INFO_Y + 5),
+                f"Server Rank: #{server_rank}",
+                fill=TEXT_LIGHT,
+                font=FONT_BODY
+            )
+
+            # Win rate (if battles exist)
+            if total_battles > 0:
+                WR_Y = INFO_Y + 70
+                
+                draw.text(
+                    (AURA_X, WR_Y),
+                    "⚔️ Battle Record:",
+                    fill=TEXT_GRAY,
+                    font=FONT_BODY
+                )
+                
+                # Animated win rate percentage
+                wr_display = winrate * ease_out_cubic(min(1.0, t * 1.5))
+                wr_color = (100, 255, 100) if winrate >= 0.5 else (255, 100, 100)
+                
+                draw.text(
+                    (AURA_X + 280, WR_Y),
+                    f"{wr_display * 100:.1f}%",
+                    fill=wr_color,
+                    font=FONT_SUB
+                )
+                
+                draw.text(
+                    (AURA_X + 420, WR_Y + 8),
+                    f"({wins}W - {losses}L)",
+                    fill=TEXT_GRAY,
+                    font=FONT_BODY
+                )
+
+            # -----------------------------
+            # STAT CARDS (ANIMATED)
+            # -----------------------------
+            CARD_Y = PANEL_Y + PANEL_H - 170
+            CARD_W, CARD_H = 230, 150
+            CARD_SPACING = 20
+
+            stat_cards = [
+                ("🔥", "STREAK", str(streak), theme["primary"]),
+                ("📈", "WEEKLY", f"{'+' if weekly >= 0 else ''}{weekly}", 
+                 (100, 255, 150) if weekly >= 0 else (255, 100, 100)),
+                ("💬", "MESSAGES", str(messages), theme["secondary"]),
+                ("⚔️", "BATTLES", str(total_battles), theme["primary"]),
+            ]
+
+            total_cards_width = CARD_W * 4 + CARD_SPACING * 3
+            start_x = PANEL_X + (PANEL_W - total_cards_width) // 2
+
+            for i, (icon, label, value, color) in enumerate(stat_cards):
+                card_x = start_x + i * (CARD_W + CARD_SPACING)
+                
+                # Staggered animation
+                card_delay = i * 0.1
+                card_t = max(0, min(1, (t - card_delay) * 2))
+                card_alpha = int(200 * ease_out_cubic(card_t))
+                card_scale = ease_out_cubic(card_t)
+                
+                # Card glow (pulsing, offset per card)
+                card_glow = int(pulse((frame_idx + i * 8) % FRAMES, FRAMES, 80, 150))
+                
+                # Create card
+                card = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
+                cd = ImageDraw.Draw(card, "RGBA")
+                
+                # Background
+                cd.rounded_rectangle(
+                    [(0, 0), (CARD_W - 1, CARD_H - 1)],
+                    radius=20,
+                    fill=(30, 25, 40, card_alpha)
+                )
+                
+                # Glowing border
+                cd.rounded_rectangle(
+                    [(0, 0), (CARD_W - 1, CARD_H - 1)],
+                    radius=20,
+                    outline=(*color, card_glow),
+                    width=3
+                )
+
+                # Icon
+                cd.text((24, 18), icon, fill=TEXT_WHITE, font=FONT_SUB)
+                
+                # Value (BIG)
+                cd.text((24, 60), value, fill=TEXT_WHITE, font=FONT_SUB)
+                
+                # Label
+                cd.text((24, 110), label, fill=TEXT_GRAY, font=FONT_SMALL)
+
+                img.paste(card, (card_x, CARD_Y), card)
+
+            # -----------------------------
+            # ACTIVE BOOSTS (if any)
+            # -----------------------------
+            now = time.time()
+            boosts = []
+            
+            if inventory.get("multiplier_expires", 0) > now:
+                boosts.append("⚡ 2X BOOST ACTIVE")
+            if inventory.get("shield_expires", 0) > now:
+                boosts.append("🛡️ SHIELD ACTIVE")
+
+            if boosts:
+                boost_y = AVATAR_Y + AVATAR_SIZE + 180
+                for boost_text in boosts:
+                    # Flashing effect
+                    boost_alpha = int(pulse(frame_idx, FRAMES, 180, 255))
+                    draw.text(
+                        (100, boost_y),
+                        boost_text,
+                        fill=(*theme["primary"], boost_alpha),
+                        font=FONT_BODY
+                    )
+                    boost_y += 50
+
+            # -----------------------------
+            # FOOTER
+            # -----------------------------
+            footer_y = HEIGHT - 45
+            draw.line([(50, footer_y - 10), (WIDTH - 50, footer_y - 10)], 
+                      fill=(*theme["primary"], 80), width=2)
+            
+            draw.text(
+                (60, footer_y),
+                "✨ AURAXIS",
+                fill=TEXT_GRAY,
+                font=FONT_SMALL
+            )
+            
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d")
+            draw.text(
+                (WIDTH - 250, footer_y),
+                f"📅 {timestamp}",
+                fill=TEXT_DARK,
+                font=FONT_SMALL
+            )
+
+            # Add frame
+            frames.append(img.convert("RGB"))
+
+        # =============================
+        # SAVE AS GIF
+        # =============================
+        buffer = BytesIO()
+        frames[0].save(
+            buffer,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=FRAME_TIME,
+            loop=0,
+            optimize=True
+        )
+        buffer.seek(0)
+
+        return buffer
+
+    except Exception as e:
+        print(f"[ANIMATED AURA CARD ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# ============================================================================
+# UPDATED STATIC CARD (Matching style, bigger text)
+# ============================================================================
+
+async def generate_aura_card_image(
+    member: discord.Member,
+    aura: int,
+    rank: str,
+    inventory: dict,
+    stats: dict
+) -> BytesIO:
+    """
+    Generate a clean, readable static aura card.
+    """
+
+    if not PIL_AVAILABLE:
+        return None
+
+    try:
+        WIDTH, HEIGHT = 1600, 800
+        img = Image.new("RGBA", (WIDTH, HEIGHT), (15, 12, 20))
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        theme = get_aura_theme(aura, inventory)
+
+        # =============================
+        # FONTS - OPTIMIZED FOR READABILITY
+        # =============================
+        try:
+            FONT_AURA = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 160
+            )
+            FONT_TITLE = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72
+            )
+            FONT_SUB = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 56
+            )
+            FONT_BODY = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 44
+            )
+            FONT_SMALL = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36
+            )
+        except:
+            FONT_AURA = FONT_TITLE = FONT_SUB = FONT_BODY = FONT_SMALL = ImageFont.load_default()
+
+        TEXT_WHITE = (255, 255, 255)
+        TEXT_LIGHT = (220, 220, 220)
+        TEXT_GRAY = (160, 160, 160)
+        TEXT_DARK = (100, 100, 100)
+
+        # =============================
+        # BACKGROUND
+        # =============================
+        # Subtle radial gradient
+        center_x, center_y = WIDTH // 3, HEIGHT // 2
+        for y in range(HEIGHT):
+            for x in range(0, WIDTH, 2):
+                dist = math.sqrt((x - center_x)**2 + (y - center_y)**2)
+                brightness = max(0, 25 - dist * 0.02)
+                r = int(theme["primary"][0] * 0.08 + brightness * 0.4)
+                g = int(theme["primary"][1] * 0.08 + brightness * 0.4)
+                b = int(theme["primary"][2] * 0.08 + brightness * 0.4)
+                draw.rectangle([(x, y), (x + 2, y + 1)], fill=(r, g, b))
+
+        # =============================
+        # AVATAR
+        # =============================
+        AVATAR_X, AVATAR_Y = 100, 140
+        AVATAR_SIZE = 300
+
+        await draw_epic_avatar(
+            img, draw, member,
+            AVATAR_X, AVATAR_Y, AVATAR_SIZE,
+            theme["primary"], theme["secondary"]
+        )
+
+        # Username
+        name_y = AVATAR_Y + AVATAR_SIZE + 35
+        username = member.display_name[:14]
+        draw.text((AVATAR_X + 3, name_y + 3), username, fill=(0, 0, 0, 180), font=FONT_TITLE)
+        draw.text((AVATAR_X, name_y), username, fill=TEXT_WHITE, font=FONT_TITLE)
+
+        # Badge
+        badge_text = get_title_badge_text(inventory)
+        if badge_text:
+            draw.text((AVATAR_X, name_y + 80), badge_text, fill=theme["primary"], font=FONT_BODY)
+
+        # =============================
+        # MAIN PANEL
+        # =============================
+        PANEL_X, PANEL_Y = 520, 60
+        PANEL_W, PANEL_H = 1020, 680
+
+        panel = Image.new("RGBA", (PANEL_W, PANEL_H), (20, 15, 30, 200))
+        panel_draw = ImageDraw.Draw(panel, "RGBA")
+        panel_draw.rounded_rectangle(
+            [(0, 0), (PANEL_W - 1, PANEL_H - 1)],
+            radius=30,
+            outline=(*theme["primary"], 180),
+            width=4
+        )
+        img.paste(panel, (PANEL_X, PANEL_Y), panel)
+
+        # =============================
+        # AURA NUMBER
+        # =============================
+        AURA_X = PANEL_X + 60
+        AURA_Y = PANEL_Y + 50
+        aura_text = f"{aura:,}"
+
+        # Glow
+        for i in range(6, 0, -1):
+            alpha = 100 - i * 15
+            draw.text(
+                (AURA_X + i, AURA_Y + i),
+                aura_text,
+                fill=(*theme["primary"], alpha),
+                font=FONT_AURA
+            )
+
+        draw_text_with_stroke(
+            draw,
+            (AURA_X, AURA_Y),
+            aura_text,
+            FONT_AURA,
+            TEXT_WHITE,
+            stroke_fill=(0, 0, 0),
+            stroke=6
+)
+
+        draw.text((AURA_X + 480, AURA_Y + 50), "⚡ AURA POWER", fill=TEXT_LIGHT, font=FONT_SUB)
+
+        # =============================
+        # PROGRESS BAR
+        # =============================
+        BAR_X = AURA_X
+        BAR_Y = AURA_Y + 180
+        BAR_W = 820
+        BAR_H = 40
+
+        current_tier = get_current_tier_threshold(aura)
+        next_tier = get_next_tier_threshold(aura)
+
+        if next_tier > current_tier:
+            progress = (aura - current_tier) / (next_tier - current_tier)
+            draw_progress_bar(draw, BAR_X, BAR_Y, BAR_W, BAR_H, progress, theme["primary"], theme["secondary"])
+            
+            draw.text(
+                (BAR_X, BAR_Y + 50),
+                f"{aura - current_tier:,} / {next_tier - current_tier:,} to next tier",
+                fill=TEXT_GRAY,
+                font=FONT_BODY
+            )
+
+        # =============================
+        # RANK & SERVER POSITION
+        # =============================
+        INFO_Y = BAR_Y + 120
+        rank_icon = get_rank_icon(aura)
+        
+        draw.text((AURA_X, INFO_Y), f"{rank_icon} {rank.upper()}", fill=TEXT_WHITE, font=FONT_SUB)
+        draw.text((AURA_X + 400, INFO_Y + 5), f"Server Rank: #{stats.get('server_rank', '?')}", fill=TEXT_LIGHT, font=FONT_BODY)
+
+        # Win rate
+        wins = stats.get("wins", 0)
+        losses = stats.get("losses", 0)
+        total = wins + losses
+
+        if total > 0:
+            winrate = wins / total
+            WR_Y = INFO_Y + 70
+            wr_color = (100, 255, 100) if winrate >= 0.5 else (255, 100, 100)
+            
+            draw.text((AURA_X, WR_Y), "⚔️ Battle Record:", fill=TEXT_GRAY, font=FONT_BODY)
+            draw.text((AURA_X + 280, WR_Y), f"{winrate * 100:.1f}%", fill=wr_color, font=FONT_SUB)
+            draw.text((AURA_X + 420, WR_Y + 8), f"({wins}W - {losses}L)", fill=TEXT_GRAY, font=FONT_BODY)
+
+        # =============================
+        # STAT CARDS
+        # =============================
+        CARD_Y = PANEL_Y + PANEL_H - 170
+        CARD_W, CARD_H = 230, 150
+        CARD_SPACING = 20
+
+        stat_cards = [
+            ("🔥", "STREAK", str(stats.get("streak", 0))),
+            ("📈", "WEEKLY", f"{'+' if stats.get('weekly_gain', 0) >= 0 else ''}{stats.get('weekly_gain', 0)}"),
+            ("💬", "MESSAGES", str(stats.get("total_messages", 0))),
+            ("⚔️", "BATTLES", str(total)),
+        ]
+
+        total_cards_width = CARD_W * 4 + CARD_SPACING * 3
+        start_x = PANEL_X + (PANEL_W - total_cards_width) // 2
+
+        for i, (icon, label, value) in enumerate(stat_cards):
+            card_x = start_x + i * (CARD_W + CARD_SPACING)
+
+            card = Image.new("RGBA", (CARD_W, CARD_H), (30, 25, 40, 220))
+            cd = ImageDraw.Draw(card, "RGBA")
+            cd.rounded_rectangle(
+                [(0, 0), (CARD_W - 1, CARD_H - 1)],
+                radius=20,
+                outline=(*theme["primary"], 150),
+                width=3
+            )
+
+            cd.text((24, 18), icon, fill=TEXT_WHITE, font=FONT_SUB)
+            cd.text((24, 60), value, fill=TEXT_WHITE, font=FONT_SUB)
+            cd.text((24, 110), label, fill=TEXT_GRAY, font=FONT_SMALL)
+
+            img.paste(card, (card_x, CARD_Y), card)
+
+        # =============================
+        # FOOTER
+        # =============================
+        footer_y = HEIGHT - 45
+        draw.line([(50, footer_y - 10), (WIDTH - 50, footer_y - 10)], fill=(*theme["primary"], 80), width=2)
+        draw.text((60, footer_y), "✨ AURAXIS", fill=TEXT_GRAY, font=FONT_SMALL)
+        draw.text((WIDTH - 250, footer_y), f"📅 {datetime.utcnow().strftime('%Y-%m-%d')}", fill=TEXT_DARK, font=FONT_SMALL)
+
+        # =============================
+        # SAVE
+        # =============================
+        final = img.convert("RGB")
+        buffer = BytesIO()
+        final.save(buffer, "PNG", quality=95)
+        buffer.seek(0)
+
+        return buffer
+
+    except Exception as e:
+        print(f"[AURA CARD ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+# ============================================================================
+# ADVANCED HELPER FUNCTIONS
+# ============================================================================
+
+def get_aura_theme(aura: int, inventory: dict) -> dict:
+    """Get color theme based on aura level."""
     
-    # Card dimensions
-    width, height = 800, 400
-    
-    # Get profile color from inventory
+    # Check for custom color
     color_id = inventory.get("active_color")
     if color_id and color_id in SHOP_ITEMS:
-        bg_color = SHOP_ITEMS[color_id]["value"]
+        base_color = SHOP_ITEMS[color_id]["value"]
+        base_rgb = ((base_color >> 16) & 255, (base_color >> 8) & 255, base_color & 255)
     else:
-        bg_color = 0x5865F2  # Default Discord blue
+        # Tier-based colors
+        if aura >= 10000:  # Cosmic
+            base_rgb = (255, 20, 147)  # Deep pink
+        elif aura >= 5000:  # Transcendent
+            base_rgb = (138, 43, 226)  # Blue violet
+        elif aura >= 2500:  # Diamond
+            base_rgb = (255, 215, 0)  # Gold
+        elif aura >= 1000:  # Platinum
+            base_rgb = (64, 224, 208)  # Turquoise
+        elif aura >= 500:  # Gold
+            base_rgb = (30, 144, 255)  # Dodger blue
+        else:  # Bronze/Silver
+            base_rgb = (88, 101, 242)  # Discord blurple
     
-    # Convert hex to RGB
-    bg_rgb = ((bg_color >> 16) & 255, (bg_color >> 8) & 255, bg_color & 255)
+    # Generate complementary colors
+    secondary_rgb = (
+        min(255, base_rgb[0] + 60),
+        max(0, base_rgb[1] - 40),
+        min(255, base_rgb[2] + 40)
+    )
     
-    # Create image
-    img = Image.new('RGB', (width, height), bg_rgb)
+    return {
+        "primary": base_rgb,
+        "secondary": secondary_rgb,
+        "glow": base_rgb,
+        "accent": (255, 255, 255),
+        "panel_bg": (*base_rgb, 60),
+        "panel_border": (*base_rgb, 180),
+        "rank_color": (255, 215, 0),
+        "success": (0, 255, 100),
+        "danger": (255, 50, 50),
+        "info": (100, 150, 255),
+        "streak": (255, 100, 0),
+        "weekly": (100, 255, 200),
+        "particles": base_rgb
+    }
+
+
+def create_ultra_background(width: int, height: int, theme: dict, aura: int) -> Image:
+    """Create an ultra-premium background with multiple effect layers."""
+    
+    # Base: Radial gradient
+    img = Image.new('RGB', (width, height))
     draw = ImageDraw.Draw(img)
     
-    # Try to load a font (fall back to default if not available)
-    try:
-        title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
-        text_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
-        small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
-    except:
-        title_font = ImageFont.load_default()
-        text_font = ImageFont.load_default()
-        small_font = ImageFont.load_default()
+    center_x, center_y = width // 2, height // 2
+    max_radius = ((width/2)**2 + (height/2)**2) ** 0.5
     
-    # Draw gradient overlay (darker at bottom)
     for y in range(height):
-        alpha = int(50 * (y / height))
-        draw.rectangle([(0, y), (width, y + 1)], fill=(0, 0, 0, alpha))
+        for x in range(width):
+            # Distance from center
+            dx = x - center_x
+            dy = y - center_y
+            distance = (dx*dx + dy*dy) ** 0.5
+            ratio = distance / max_radius
+            
+            # Radial gradient
+            r = int(theme["primary"][0] * (0.15 + ratio * 0.15))
+            g = int(theme["primary"][1] * (0.15 + ratio * 0.15))
+            b = int(theme["primary"][2] * (0.15 + ratio * 0.15))
+            
+            img.putpixel((x, y), (r, g, b))
     
-    # Fetch and paste avatar
+    img = img.convert('RGBA')
+    
+    # Layer 1: Animated wave pattern
+    wave_layer = create_wave_pattern(width, height, theme["primary"])
+    img = Image.alpha_composite(img, wave_layer)
+    
+    # Layer 2: Hexagonal grid
+    hex_layer = create_hexagon_grid(width, height, theme["secondary"])
+    img = Image.alpha_composite(img, hex_layer)
+    
+    # Layer 3: Energy orbs
+    orb_layer = create_energy_orbs(width, height, theme["glow"], aura)
+    img = Image.alpha_composite(img, orb_layer)
+    
+    # Layer 4: Scanline effect
+    scan_layer = create_scanlines(width, height)
+    img = Image.alpha_composite(img, scan_layer)
+    
+    # Layer 5: Light rays
+    rays_layer = create_light_rays(width, height, theme["accent"])
+    img = Image.alpha_composite(img, rays_layer)
+    
+    return img
+
+
+def create_wave_pattern(width: int, height: int, color: tuple) -> Image:
+    """Create animated wave pattern."""
+    layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    
+    import math
+    
+    wave_count = 8
+    for i in range(wave_count):
+        y_offset = (height / wave_count) * i
+        points = []
+        
+        for x in range(0, width + 20, 20):
+            amplitude = 30 + i * 5
+            frequency = 0.01 + i * 0.005
+            y = y_offset + amplitude * math.sin(x * frequency + i)
+            points.append((x, int(y)))
+        
+        # Draw wave
+        if len(points) > 1:
+            draw.line(points, fill=(*color, 30), width=2)
+    
+    return layer
+
+
+def create_hexagon_grid(width: int, height: int, color: tuple) -> Image:
+    """Create hexagonal grid pattern."""
+    layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    
+    import math
+    
+    hex_size = 60
+    hex_height = hex_size * math.sqrt(3)
+    
+    for row in range(-1, int(height / hex_height) + 2):
+        for col in range(-1, int(width / (1.5 * hex_size)) + 2):
+            x = col * 1.5 * hex_size
+            y = row * hex_height
+            
+            if col % 2 == 1:
+                y += hex_height / 2
+            
+            # Draw hexagon outline
+            hex_points = []
+            for angle in range(0, 360, 60):
+                px = x + hex_size * math.cos(math.radians(angle))
+                py = y + hex_size * math.sin(math.radians(angle))
+                hex_points.append((int(px), int(py)))
+            
+            if len(hex_points) > 2:
+                draw.polygon(hex_points, outline=(*color, 25), width=1)
+    
+    return layer
+
+
+def create_energy_orbs(width: int, height: int, color: tuple, aura: int) -> Image:
+    """Create glowing energy orbs."""
+    layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    
+    import random
+    random.seed(aura)
+    
+    # Number of orbs based on aura level
+    orb_count = min(8 + aura // 1000, 20)
+    
+    for _ in range(orb_count):
+        x = random.randint(0, width)
+        y = random.randint(0, height)
+        max_radius = random.randint(80, 150)
+        
+        # Multi-layer glow
+        for radius in range(max_radius, 0, -15):
+            alpha = int(50 * (1 - radius / max_radius))
+            draw.ellipse(
+                [(x - radius, y - radius), (x + radius, y + radius)],
+                fill=(*color, alpha)
+            )
+    
+    return layer
+
+
+def create_scanlines(width: int, height: int) -> Image:
+    """Create subtle scanline effect."""
+    layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    
+    for y in range(0, height, 4):
+        draw.line([(0, y), (width, y)], fill=(0, 0, 0, 30), width=2)
+    
+    return layer
+
+
+def create_light_rays(width: int, height: int, color: tuple) -> Image:
+    """Create diagonal light rays."""
+    layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    
+    ray_count = 6
+    ray_spacing = width // ray_count
+    
+    for i in range(ray_count):
+        x = i * ray_spacing
+        # Draw trapezoid ray
+        points = [
+            (x, 0),
+            (x + 50, 0),
+            (x + 150, height),
+            (x + 100, height)
+        ]
+        draw.polygon(points, fill=(*color, 8))
+    
+    return layer
+
+
+async def draw_epic_avatar(img, draw, member, x, y, size, primary_color, secondary_color):
+    """Draw avatar with epic multi-layer effects."""
+    
     try:
+        # Fetch avatar
         async with aiohttp.ClientSession() as session:
             async with session.get(str(member.display_avatar.url)) as resp:
                 avatar_data = await resp.read()
         
         avatar_img = Image.open(BytesIO(avatar_data)).convert("RGBA")
-        avatar_img = avatar_img.resize((120, 120))
+        avatar_img = avatar_img.resize((size, size), Image.Resampling.LANCZOS)
         
-        # Create circular mask
-        mask = Image.new("L", (120, 120), 0)
+        # Circular mask
+        mask = Image.new("L", (size, size), 0)
         mask_draw = ImageDraw.Draw(mask)
-        mask_draw.ellipse((0, 0, 120, 120), fill=255)
+        mask_draw.ellipse((0, 0, size, size), fill=255)
+        
+        # MEGA GLOW - Multiple colored layers
+        glow_layers = [
+            (35, (*primary_color, 100)),
+            (28, (*secondary_color, 120)),
+            (21, (255, 255, 255, 80)),
+            (14, (*primary_color, 140)),
+            (7, (*secondary_color, 160))
+        ]
+        
+        for glow_offset, glow_color in glow_layers:
+            glow_size = size + glow_offset * 2
+            glow_layer = Image.new('RGBA', (glow_size, glow_size), (0, 0, 0, 0))
+            glow_draw = ImageDraw.Draw(glow_layer)
+            
+            # Soft gradient glow
+            for r in range(glow_offset, 0, -2):
+                alpha = int(glow_color[3] * (1 - r / glow_offset))
+                glow_draw.ellipse(
+                    [(glow_offset - r, glow_offset - r), 
+                     (glow_size - glow_offset + r, glow_size - glow_offset + r)],
+                    outline=(*glow_color[:3], alpha),
+                    width=2
+                )
+            
+            img.paste(glow_layer, (x - glow_offset, y - glow_offset), glow_layer)
         
         # Paste avatar
-        img.paste(avatar_img, (40, 40), mask)
+        img.paste(avatar_img, (x, y), mask)
+        
+        # Triple border
+        borders = [
+            (8, (255, 255, 255), 255),
+            (5, primary_color, 255),
+            (2, secondary_color, 200)
+        ]
+        
+        for width_offset, border_color, alpha in borders:
+            draw.ellipse(
+                [(x - width_offset, y - width_offset), 
+                 (x + size + width_offset, y + size + width_offset)],
+                outline=(*border_color, alpha),
+                width=4
+            )
+    
     except Exception as e:
-        print(f"[AURA CARD] Avatar error: {e}")
-        # Draw placeholder circle
-        draw.ellipse((40, 40, 160, 160), fill=(100, 100, 100))
+        print(f"[AVATAR] Error: {e}")
+        # Fallback
+        draw.ellipse(
+            [(x, y), (x + size, y + size)],
+            fill=(80, 80, 80),
+            outline=(255, 255, 255),
+            width=6
+        )
+
+
+def create_glass_panel_advanced(width: int, height: int, bg_color: tuple, border_color: tuple) -> Image:
+    """Create an advanced glass panel with frosted effect."""
     
-    # Draw username and title
-    title = inventory.get("active_title")
-    if title and title in SHOP_ITEMS:
-        title_text = SHOP_ITEMS[title]["value"]
-        display_name = f"{member.display_name} • {title_text}"
-    else:
-        display_name = member.display_name
+    panel = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(panel)
     
-    draw.text((180, 50), display_name, fill=(255, 255, 255), font=title_font)
+    # Main panel background
+    draw.rounded_rectangle(
+        [(0, 0), (width, height)],
+        radius=30,
+        fill=bg_color
+    )
     
-    # Draw badge if equipped
+    # Inner glow
+    for i in range(5):
+        draw.rounded_rectangle(
+            [(i, i), (width - i, height - i)],
+            radius=30 - i,
+            outline=(*border_color[:3], 50 - i * 8),
+            width=1
+        )
+    
+    # Outer border
+    draw.rounded_rectangle(
+        [(0, 0), (width, height)],
+        radius=30,
+        outline=border_color,
+        width=4
+    )
+    
+    # Top highlight
+    highlight = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    highlight_draw = ImageDraw.Draw(highlight)
+    highlight_draw.rounded_rectangle(
+        [(10, 10), (width - 10, 40)],
+        radius=15,
+        fill=(255, 255, 255, 40)
+    )
+    panel = Image.alpha_composite(panel, highlight)
+    
+    return panel
+
+
+def get_title_badge_text(inventory: dict) -> str:
+    """Get combined title and badge text."""
+    parts = []
+    
+    title_id = inventory.get("active_title")
+    if title_id and title_id in SHOP_ITEMS:
+        parts.append(SHOP_ITEMS[title_id]['value'])
+    
     badge_id = inventory.get("active_badge")
     if badge_id and badge_id in SHOP_ITEMS:
-        badge = SHOP_ITEMS[badge_id]["value"]
-        draw.text((180, 95), badge, fill=(255, 255, 255), font=title_font)
+        parts.append(SHOP_ITEMS[badge_id]['value'])
     
-    # Draw aura score
-    draw.text((180, 130), f"✨ {aura} Aura", fill=(255, 255, 255), font=text_font)
+    return " ".join(parts)
+
+
+def create_badge_container(text: str, font) -> Image:
+    """Create a stylish badge container."""
+    if not text:
+        return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
     
-    # Draw rank
-    draw.text((180, 165), f"🏆 {rank}", fill=(255, 215, 0), font=text_font)
+    # Measure text size
+    temp_img = Image.new('RGBA', (1, 1))
+    temp_draw = ImageDraw.Draw(temp_img)
+    bbox = temp_draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
     
-    # Draw stats section
-    stats_y = 220
-    draw.text((40, stats_y), "📊 STATS", fill=(255, 255, 255), font=text_font)
+    # Create badge
+    padding = 20
+    badge_width = text_width + padding * 2
+    badge_height = text_height + padding
     
-    draw.text((40, stats_y + 40), f"Messages: {stats.get('total_messages', 0)}", fill=(200, 200, 200), font=small_font)
-    draw.text((40, stats_y + 70), f"Battle Wins: {stats.get('wins', 0)}", fill=(200, 200, 200), font=small_font)
-    draw.text((40, stats_y + 100), f"Daily Streak: {stats.get('streak', 0)} 🔥", fill=(200, 200, 200), font=small_font)
+    badge = Image.new('RGBA', (badge_width, badge_height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(badge)
     
-    # Draw weekly stats
-    draw.text((400, stats_y), "📈 THIS WEEK", fill=(255, 255, 255), font=text_font)
-    draw.text((400, stats_y + 40), f"Aura Gained: +{stats.get('weekly_gain', 0)}", fill=(200, 200, 200), font=small_font)
-    draw.text((400, stats_y + 70), f"Server Rank: #{stats.get('server_rank', '?')}", fill=(200, 200, 200), font=small_font)
+    # Background
+    draw.rounded_rectangle(
+        [(0, 0), (badge_width, badge_height)],
+        radius=15,
+        fill=(0, 0, 0, 180)
+    )
     
-    # Save to BytesIO
-    buffer = BytesIO()
-    img.save(buffer, format='PNG')
-    buffer.seek(0)
+    # Border
+    draw.rounded_rectangle(
+        [(0, 0), (badge_width, badge_height)],
+        radius=15,
+        outline=(255, 215, 0),
+        width=3
+    )
     
-    return buffer
+    # Text
+    draw.text((padding, padding // 2), text, fill=(255, 215, 0), font=font)
+    
+    return badge
+
+
+def get_next_tier_threshold(aura: int) -> int:
+    """Get the next tier threshold."""
+    tiers = [100, 250, 500, 1000, 1500, 2500, 5000, 7500, 10000, 15000, 20000]
+    
+    for tier in tiers:
+        if aura < tier:
+            return tier
+    
+    return 0  # Max tier reached
+
+
+def get_current_tier_threshold(aura: int) -> int:
+    """Get current tier threshold."""
+    tiers = [0, 100, 250, 500, 1000, 1500, 2500, 5000, 7500, 10000, 15000]
+    
+    current = 0
+    for tier in tiers:
+        if aura >= tier:
+            current = tier
+        else:
+            break
+    
+    return current
+
+
+def draw_progress_bar(draw, x, y, width, height, progress, color1, color2):
+    """Draw an advanced progress bar with gradient."""
+    
+    # Background
+    draw.rounded_rectangle(
+        [(x, y), (x + width, y + height)],
+        radius=height // 2,
+        fill=(40, 40, 40)
+    )
+    
+    # Progress fill
+    filled_width = int(width * min(progress, 1.0))
+    
+    if filled_width > 0:
+        # Gradient effect (simulated)
+        segments = 20
+        for i in range(segments):
+            segment_x = x + (filled_width // segments) * i
+            segment_width = filled_width // segments
+            
+            ratio = i / segments
+            r = int(color1[0] * (1 - ratio) + color2[0] * ratio)
+            g = int(color1[1] * (1 - ratio) + color2[1] * ratio)
+            b = int(color1[2] * (1 - ratio) + color2[2] * ratio)
+            
+            draw.rounded_rectangle(
+                [(segment_x, y), (segment_x + segment_width, y + height)],
+                radius=height // 2,
+                fill=(r, g, b)
+            )
+    
+    # Border
+    draw.rounded_rectangle(
+        [(x, y), (x + width, y + height)],
+        radius=height // 2,
+        outline=(255, 255, 255, 100),
+        width=2
+    )
+
+
+def get_rank_icon(aura: int) -> str:
+    """Get rank icon based on aura."""
+    if aura >= 10000:
+        return "👑"
+    elif aura >= 5000:
+        return "⚡"
+    elif aura >= 2500:
+        return "💎"
+    elif aura >= 1000:
+        return "🏆"
+    elif aura >= 500:
+        return "🥇"
+    else:
+        return "✨"
+
+
+def create_rank_badge_advanced(text: str, font, color: tuple) -> Image:
+    """Create an advanced rank badge."""
+    
+    # Measure text
+    temp_img = Image.new('RGBA', (1, 1))
+    temp_draw = ImageDraw.Draw(temp_img)
+    bbox = temp_draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    
+    # Create badge
+    padding = 25
+    badge_width = text_width + padding * 2
+    badge_height = text_height + padding
+    
+    badge = Image.new('RGBA', (badge_width, badge_height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(badge)
+    
+    # Glow layers
+    for offset in range(8, 0, -1):
+        alpha = 120 - offset * 12
+        draw.rounded_rectangle(
+            [(-offset, -offset), (badge_width + offset, badge_height + offset)],
+            radius=20,
+            fill=(*color, alpha)
+        )
+    
+    # Main background
+    draw.rounded_rectangle(
+        [(0, 0), (badge_width, badge_height)],
+        radius=20,
+        fill=(0, 0, 0, 200)
+    )
+    
+    # Border
+    draw.rounded_rectangle(
+        [(0, 0), (badge_width, badge_height)],
+        radius=20,
+        outline=color,
+        width=4
+    )
+    
+    # Text with shadow
+    draw.text((padding + 2, padding // 2 + 2), text, fill=(0, 0, 0), font=font)
+    draw.text((padding, padding // 2), text, fill=color, font=font)
+    
+    return badge
+
+
+def draw_circular_progress(draw, x, y, radius, progress, success_color, danger_color):
+    """Draw a circular progress indicator."""
+    
+    import math
+    
+    # Background circle
+    draw.ellipse(
+        [(x - radius, y - radius), (x + radius, y + radius)],
+        outline=(80, 80, 80),
+        width=6
+    )
+    
+    # Progress arc
+    angle = int(360 * progress)
+    
+    # Determine color based on progress
+    if progress >= 0.7:
+        color = success_color
+    elif progress >= 0.4:
+        color = (255, 200, 0)
+    else:
+        color = danger_color
+    
+    # Draw arc (approximation with lines)
+    points = []
+    for i in range(angle):
+        rad = math.radians(i - 90)
+        px = x + radius * math.cos(rad)
+        py = y + radius * math.sin(rad)
+        points.append((px, py))
+    
+    if len(points) > 1:
+        for i in range(len(points) - 1):
+            draw.line([points[i], points[i + 1]], fill=color, width=6)
+
+
+def create_stat_card_advanced(width: int, height: int, data: dict, text_font, small_font) -> Image:
+    """Create a stat card with much larger, clearer text."""
+    card = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(card)
+    
+    # Background with subtle gradient
+    draw.rounded_rectangle([(0, 0), (width, height)], radius=25, fill=(*data["color"], 160))
+    draw.rounded_rectangle([(0, 0), (width, height)], radius=25, outline=(255, 255, 255, 100), width=3)
+    
+    # Value (The Big Number)
+    value_str = str(data["value"])
+    # Using text_font for the value to ensure it's huge
+    v_bbox = draw.textbbox((0, 0), value_str, font=text_font)
+    v_w, v_h = v_bbox[2] - v_bbox[0], v_bbox[3] - v_bbox[1]
+    draw.text(((width - v_w) // 2, height // 2 - 20), value_str, fill=(255, 255, 255), font=text_font)
+    
+    # Label (The Small Text)
+    label_str = data["label"]
+    l_bbox = draw.textbbox((0, 0), label_str, font=small_font)
+    l_w = l_bbox[2] - l_bbox[0]
+    draw.text(((width - l_w) // 2, height // 2 + 40), label_str, fill=(230, 230, 230), font=small_font)
+    
+    return card
+def create_effect_badge(icon: str, name: str, time: str, color: tuple, text_font, small_font) -> Image:
+    """Create an effect badge (boost/shield)."""
+    
+    badge_width = 280
+    badge_height = 90
+    
+    badge = Image.new('RGBA', (badge_width, badge_height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(badge)
+    
+    # Glow
+    for offset in range(6, 0, -1):
+        alpha = 100 - offset * 12
+        draw.rounded_rectangle(
+            [(-offset, -offset), (badge_width + offset, badge_height + offset)],
+            radius=15,
+            fill=(*color, alpha)
+        )
+    
+    # Background
+    draw.rounded_rectangle(
+        [(0, 0), (badge_width, badge_height)],
+        radius=15,
+        fill=(*color, 220)
+    )
+    
+    # Border
+    draw.rounded_rectangle(
+        [(0, 0), (badge_width, badge_height)],
+        radius=15,
+        outline=(255, 255, 255),
+        width=3
+    )
+    
+    # Icon
+    draw.text((20, 15), icon, font=text_font)
+    
+    # Name
+    draw.text((70, 20), name, fill=(0, 0, 0), font=text_font)
+    
+    # Time
+    draw.text((70, 55), f"⏱ {time}", fill=(0, 0, 0), font=small_font)
+    
+    return badge
+
+
+def draw_premium_corners(draw, width: int, height: int, color: tuple):
+    """Draw premium corner accents."""
+    
+    corner_length = 60
+    corner_thickness = 5
+    
+    corners = [
+        # Top-left
+        [(30, 30), (30 + corner_length, 30)],
+        [(30, 30), (30, 30 + corner_length)],
+        # Top-right
+        [(width - 30, 30), (width - 30 - corner_length, 30)],
+        [(width - 30, 30), (width - 30, 30 + corner_length)],
+        # Bottom-left
+        [(30, height - 30), (30 + corner_length, height - 30)],
+        [(30, height - 30), (30, height - 30 - corner_length)],
+        # Bottom-right
+        [(width - 30, height - 30), (width - 30 - corner_length, height - 30)],
+        [(width - 30, height - 30), (width - 30, height - 30 - corner_length)]
+    ]
+    
+    for line_coords in corners:
+        # Glow
+        for i in range(3):
+            draw.line(
+                line_coords,
+                fill=(*color, 180 - i * 40),
+                width=corner_thickness + i * 2
+            )
+        
+        # Main line
+        draw.line(line_coords, fill=color, width=corner_thickness)
+
+
+def draw_particles(draw, width: int, height: int, color: tuple, seed: int):
+    """Draw animated particle effect."""
+    
+    import random
+    random.seed(seed)
+    
+    for _ in range(30):
+        x = random.randint(0, width)
+        y = random.randint(0, height)
+        size = random.randint(2, 5)
+        alpha = random.randint(80, 200)
+        
+        draw.ellipse(
+            [(x, y), (x + size, y + size)],
+            fill=(*color, alpha)
+        )
+
+
+def calculate_user_level(aura: int) -> int:
+    """Calculate user level based on aura."""
+    return min(100, aura // 100)
+
+
+def create_level_banner(level: int, width: int, font, theme: dict) -> Image:
+    """Create a level banner at the top."""
+    
+    banner_height = 60
+    banner = Image.new('RGBA', (width, banner_height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(banner)
+    
+    # Background gradient
+    for y in range(banner_height):
+        ratio = y / banner_height
+        alpha = int(180 * (1 - ratio))
+        draw.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
+    
+    # Level text
+    level_text = f"⭐ LEVEL {level}"
+    bbox = draw.textbbox((0, 0), level_text, font=font)
+    text_width = bbox[2] - bbox[0]
+    
+    text_x = width // 2 - text_width // 2
+    
+    # Shadow
+    draw.text((text_x + 2, 12), level_text, fill=(0, 0, 0), font=font)
+    # Main
+    draw.text((text_x, 10), level_text, fill=(255, 215, 0), font=font)
+    
+    return banner
+
+
+def create_signature_bar(width: int, font, theme: dict) -> Image:
+    """Create signature bar at bottom."""
+    
+    bar_height = 40
+    bar = Image.new('RGBA', (width, bar_height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(bar)
+    
+    # Background
+    draw.rectangle([(0, 0), (width, bar_height)], fill=(0, 0, 0, 160))
+    
+    # Decorative line
+    draw.line([(0, 0), (width, 0)], fill=(*theme["primary"], 180), width=2)
+    
+    # Text
+    from datetime import datetime
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    
+    draw.text((30, 10), f"✨ AURAXIS", fill=(200, 200, 200), font=font)
+    draw.text((width - 250, 10), f"📅 {timestamp}", fill=(150, 150, 150), font=font)
+    
+    return bar
 
 def generate_text_aura_card(member: discord.Member, aura: int, rank: str, inventory: dict, stats: dict) -> discord.Embed:
-    """Generate a text-based aura card embed."""
+    """Generate an enhanced text-based aura card embed with better styling."""
     
     # Get profile color
     color_id = inventory.get("active_color")
     if color_id and color_id in SHOP_ITEMS:
         color = SHOP_ITEMS[color_id]["value"]
     else:
-        color = 0x5865F2
+        # Dynamic color based on aura score
+        if aura >= 5000:
+            color = 0xFF69B4  # Hot pink for elite
+        elif aura >= 2500:
+            color = 0xFFD700  # Gold
+        elif aura >= 1000:
+            color = 0x9B59B6  # Purple
+        elif aura >= 500:
+            color = 0x3498DB  # Blue
+        else:
+            color = 0x95A5A6  # Gray
     
-    # Get title
+    # Get title with emoji
     title_id = inventory.get("active_title")
     title_text = ""
     if title_id and title_id in SHOP_ITEMS:
-        title_text = f" • {SHOP_ITEMS[title_id]['value']}"
+        title_text = f" {SHOP_ITEMS[title_id]['value']}"
     
-    # Get badge
+    # Get badge with special styling
     badge_id = inventory.get("active_badge")
     badge = ""
     if badge_id and badge_id in SHOP_ITEMS:
         badge = f" {SHOP_ITEMS[badge_id]['value']}"
     
+    # Create rank emoji based on tier
+    rank_emoji = "👑" if aura >= 10000 else "⚡" if aura >= 5000 else "🔮" if aura >= 2500 else "💎" if aura >= 1000 else "🏆"
+    
     embed = discord.Embed(
-        title=f"✨ {member.display_name}{title_text}{badge}",
-        color=color
+        color=color,
+        timestamp=datetime.utcnow()
     )
     
-    # Main stats
+    # Styled title with decorative elements
+    embed.title = f"═══════════════════════════"
+    
+    # Main header with name and badges
+    header = f"✨ **{member.display_name}**{title_text}{badge}\n"
+    header += f"━━━━━━━━━━━━━━━━━━━━━━"
+    
+    embed.description = header
+    
+    # Main stats with visual bars
+    aura_bar = create_progress_bar(aura, 10000, 15)
+    
     embed.add_field(
-        name="⚡ Aura",
-        value=f"**{aura}**",
-        inline=True
-    )
-    embed.add_field(
-        name="🏆 Rank",
-        value=f"**{rank}**",
-        inline=True
-    )
-    embed.add_field(
-        name="📍 Server Rank",
-        value=f"**#{stats.get('server_rank', '?')}**",
-        inline=True
+        name=f"{rank_emoji} Aura Power",
+        value=f"```yaml\n{aura:,} ⚡\n{aura_bar}```",
+        inline=False
     )
     
-    # Battle stats
     embed.add_field(
-        name="⚔️ Battles",
-        value=f"**{stats.get('wins', 0)}**W / **{stats.get('losses', 0)}**L",
-        inline=True
-    )
-    embed.add_field(
-        name="🔥 Streak",
-        value=f"**{stats.get('streak', 0)}** days",
-        inline=True
-    )
-    embed.add_field(
-        name="📈 Weekly",
-        value=f"+**{stats.get('weekly_gain', 0)}** aura",
+        name="🏆 Rank & Position",
+        value=f"```css\n[{rank}]\n#{stats.get('server_rank', '?')} on Server```",
         inline=True
     )
     
-    # Active boosts
+    # Battle stats with win rate bar
+    wins = stats.get('wins', 0)
+    losses = stats.get('losses', 0)
+    total_battles = wins + losses
+    winrate = (wins / total_battles * 100) if total_battles > 0 else 0
+    winrate_bar = create_progress_bar(int(winrate), 100, 10)
+    
+    embed.add_field(
+        name="⚔️ Battle Record",
+        value=f"```yaml\n{wins}W - {losses}L\n{winrate_bar} {winrate:.0f}%```",
+        inline=True
+    )
+    
+    # Streak with fire intensity
+    streak = stats.get('streak', 0)
+    fire_emoji = "🔥" * min(streak // 3, 5) if streak > 0 else "❄️"
+    
+    embed.add_field(
+        name=f"{fire_emoji} Daily Streak",
+        value=f"```fix\n{streak} Days\n{'+' + str(10 + streak * 5) + ' aura/day'}```",
+        inline=True
+    )
+    
+    # Weekly performance
+    weekly_gain = stats.get('weekly_gain', 0)
+    trend_emoji = "📈" if weekly_gain > 0 else "📉" if weekly_gain < 0 else "➡️"
+    
+    embed.add_field(
+        name=f"{trend_emoji} This Week",
+        value=f"```diff\n{'+' if weekly_gain >= 0 else ''}{weekly_gain} aura gained```",
+        inline=True
+    )
+    
+    # Active boosts with time remaining
     now = time.time()
-    boosts = []
-    if inventory.get("multiplier_expires", 0) > now:
-        boosts.append(f"⚡ {inventory.get('multiplier_value', 2)}x Boost")
-    if inventory.get("shield_expires", 0) > now:
-        boosts.append("🛡️ Shield")
+    boost_text = ""
     
-    if boosts:
+    if inventory.get("multiplier_expires", 0) > now:
+        remaining = int(inventory["multiplier_expires"] - now)
+        hours = remaining // 3600
+        boost_text += f"⚡ **{inventory.get('multiplier_value', 2)}x Boost** ({hours}h left)\n"
+    
+    if inventory.get("shield_expires", 0) > now:
+        remaining = int(inventory["shield_expires"] - now)
+        hours = remaining // 3600
+        boost_text += f"🛡️ **Shield Active** ({hours}h left)\n"
+    
+    if boost_text:
         embed.add_field(
-            name="✨ Active Boosts",
-            value=" • ".join(boosts),
-            inline=False
+            name="✨ Active Effects",
+            value=boost_text.strip(),
+            inline=True
         )
     
+    # Footer with decorative elements
     embed.set_thumbnail(url=member.display_avatar.url)
-    embed.set_footer(text="Auraxis • !shop to customize your card")
+    embed.set_footer(
+        text=f"✨ Auraxis • {stats.get('total_messages', 0)} messages tracked",
+        icon_url=member.display_avatar.url
+    )
     
     return embed
 
+def create_progress_bar(value: int, max_value: int, length: int = 10) -> str:
+    """Create a visual progress bar."""
+    filled = int((value / max_value) * length) if max_value > 0 else 0
+    filled = min(filled, length)
+    
+    bar = "█" * filled + "░" * (length - filled)
+    return bar
+class AuraCardView(discord.ui.View):
+    """Interactive buttons for aura card."""
+    
+    def __init__(self, member: discord.Member):
+        super().__init__(timeout=60)
+        self.member = member
+    
+    @discord.ui.button(label="📊 Full Stats", style=discord.ButtonStyle.primary)
+    async def stats_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Redirect to aurastats command
+        uid = str(self.member.id)
+        aura = aura_data.get(uid, 0)
+        rank = get_rank_name(aura)
+        logs = aura_logs.get(uid, [])
+        
+        # Quick stats embed
+        embed = discord.Embed(
+            title=f"📊 {self.member.display_name}'s Quick Stats",
+            color=0x5865F2
+        )
+        embed.add_field(name="Total Messages", value=str(len(logs)), inline=True)
+        embed.add_field(name="Aura", value=str(aura), inline=True)
+        embed.add_field(name="Rank", value=rank, inline=True)
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="🛒 Shop", style=discord.ButtonStyle.success)
+    async def shop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Use `!shop` to browse items!", ephemeral=True)
+    
+    @discord.ui.button(label="⚔️ Challenge", style=discord.ButtonStyle.danger)
+    async def battle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            f"Challenge {self.member.mention} with `!aurabattle @{self.member.name}`!",
+            ephemeral=True
+        )
+        
 @bot.command()
 async def auracard(ctx, member: discord.Member = None):
-    """Display your or someone's aura profile card!"""
+    """Display your animated aura profile card!"""
     member = member or ctx.author
     uid = str(member.id)
     
     aura = aura_data.get(uid, 0)
     rank = get_rank_name(aura)
     inventory = get_user_inventory(uid)
-    
-    # Gather stats
     battle_stats = battles_data.get(uid, {})
     streak_info = get_daily_info(uid)
     
-    # Calculate server rank
     sorted_aura = sorted(aura_data.items(), key=lambda x: x[1], reverse=True)
     server_rank = next((i + 1 for i, (u, _) in enumerate(sorted_aura) if u == uid), None)
     
-    # Calculate weekly gain from tournament
     weekly_gain = 0
     if ctx.guild:
         tournament = get_current_tournament(str(ctx.guild.id))
         weekly_gain = tournament.get("participants", {}).get(uid, 0)
     
+    wins = battle_stats.get("wins", 0)
+    losses = battle_stats.get("losses", 0)
+    
     stats = {
-        "wins": battle_stats.get("wins", 0),
-        "losses": battle_stats.get("losses", 0),
+        "wins": wins,
+        "losses": losses,
         "streak": streak_info.get("streak", 0),
         "server_rank": server_rank,
         "weekly_gain": weekly_gain,
         "total_messages": len(aura_logs.get(uid, []))
     }
     
-    # Try to generate image card
+    # Show "generating" message (animated cards take time)
+    msg = await ctx.send("Generating animated aura card...")
+    
     if PIL_AVAILABLE:
         try:
-            buffer = await generate_aura_card_image(member, aura, rank, inventory, stats)
+            # ✅ CALL ANIMATED VERSION - NOT STATIC!
+            buffer = await generate_animated_aura_card_image(member, aura, rank, inventory, stats)
+            
             if buffer:
-                file = discord.File(buffer, filename="auracard.png")
-                await ctx.send(file=file)
+                await msg.delete()
+                file = discord.File(buffer, filename="auracard.gif")  # ✅ .gif NOT .png!
+                view = AuraCardView(member)
+                await ctx.send(file=file, view=view)
                 return
         except Exception as e:
-            print(f"[AURA CARD] Image generation failed: {e}")
+            print(f"[ANIMATED CARD ERROR] {e}")
+            import traceback
+            traceback.print_exc()
     
-    # Fall back to text embed
+    # Fallback to static if animated fails
+    await msg.edit(content="⚠️ Animated failed, generating static...")
+    
+    try:
+        buffer = await generate_aura_card_image(member, aura, rank, inventory, stats)
+        if buffer:
+            await msg.delete()
+            file = discord.File(buffer, filename="auracard.png")
+            view = AuraCardView(member)
+            await ctx.send(file=file, view=view)
+            return
+    except:
+        pass
+    
+    # Final fallback to text
+    await msg.delete()
     embed = generate_text_aura_card(member, aura, rank, inventory, stats)
-    await ctx.send(embed=embed)
-
+    view = AuraCardView(member)
+    await ctx.send(embed=embed, view=view)
+    
 @bot.tree.command(name="auracard", description="Display your aura profile card")
 async def auracard_slash(interaction: discord.Interaction, user: discord.Member = None):
     member = user or interaction.user
@@ -4176,7 +5911,7 @@ async def on_ready():
         activity=discord.Game("Measuring Aura ⚡")
     )
     
-    # ✅ Force immediate global sync on startup
+    # ✅ Force immediate global sync on startup 
     print("[STARTUP] Syncing global stats...")
     for guild in bot.guilds:
         for member in guild.members:
@@ -4212,7 +5947,24 @@ async def on_ready():
 async def on_message(message):
     if message.author.bot:
         return
-    
+    if message.content.strip() == f"<@{bot.user.id}>":
+        guild_id = str(message.guild.id)
+        prefix = config_data.get(guild_id, {}).get("prefix", "!")
+        await message.channel.send(f"👋 My prefix here is `{prefix}`")
+
+    await bot.process_commands(message)
+    penalty = 0
+
+    user_id = str(message.author.id)
+    content = message.content.lower()
+        # 🔥 TEST TOXIC CASE
+    ai_score = await calculate_ai_aura_devstral(content)
+    allowed, penalty_amount, toxic_expls = evaluate_toxic_decision(
+        content,
+        ai_score,
+        message
+    )
+    toxic_loss = allowed
     # --- BOT MENTION HANDLER ---
     if (
         message.content.strip() == f"<@{bot.user.id}>"
@@ -4231,16 +5983,17 @@ async def on_message(message):
         await message.channel.send(embed=embed)
         return
 
+
 # --- END BOT MENTION HANDLER ---
-    await bot.process_commands(message)
 
     if not message.guild:
         return
 
     if not is_channel_enabled(message.guild.id, message.channel.id):
         content = message.content.strip().lower()
-        if content.startswith(PREFIX):
-            cmd = content[len(PREFIX):].split()[0]
+        if content.startswith(prefix):
+            cmd = content[len(prefix):].split()[0]
+
             if (
                 cmd in ADMIN_COMMANDS
                 and message.author.guild_permissions.manage_guild
@@ -4269,10 +6022,31 @@ async def on_message(message):
         aura_gain = max(2, min(aura_gain, 4))  # force positive band
 
         user_id = str(message.author.id)
-        current = aura_data.get(user_id, 0)
-        new_score = max(0, current + aura_gain)
+        # Inside on_message, replace the scoring logic block with this:
+        if is_obviously_safe(content_norm):
+            # Even obviously safe messages need AI approval to gain aura
+            if ai_score > 0:
+                aura_gain = ai_score # Use pure AI score, or add small bonus if desired
+            else:
+                aura_gain = 0 # AI says neutral/weird → no gain
+            penalty_amount = 0
+            toxic_loss = False
+        elif toxic_loss:
+            # Apply toxic penalty as before
+            aura_gain = penalty_amount
+        else:
+            # Non-toxic messages: ONLY gain aura if AI says positive
+            if ai_score > 0:
+                # Optional: Add small helper bonuses for positive messages (remove this line for pure AI scoring)
+                aura_gain = ai_score + min(rule_score, 2) + min(semantic_score,1)
+                aura_gain = max(1, aura_gain) # Ensure minimum +1 for positive messages
+            else:
+                aura_gain = 0 # AI says neutral/weird → no gain
 
-        aura_data[user_id] = new_score
+        # Keep the new_score calculation (allows negative aura for toxic messages)
+        current = aura_data.get(user_id, 0)
+        new_score = current + aura_gain
+        aura_data[user_id] = new_score 
         if aura_gain > 0 and message.guild:
             record_tournament_aura(str(message.guild.id), user_id, aura_gain)
 
@@ -4290,7 +6064,9 @@ async def on_message(message):
 
         return  # 🚨 IMPORTANT: skip ALL toxicity logic
 
-    if content_norm.startswith(PREFIX):
+    prefix = get_guild_prefix(message)
+
+    if content_norm.startswith(prefix):
         return
     if len(content_norm.split()) < 4:
         return
@@ -4353,26 +6129,35 @@ async def on_message(message):
 
     if is_obviously_safe(content_norm):
         aura_gain_raw = (
-            rule_score * 1.0
-            + max(0, local_score) * 1.3
-            + semantic_score * 0.6
-        )
+                    (ai_score * 1.5) +              
+                    (rule_score * 0.8) +             
+                    (max(0, local_score) * 0.4) +    # Local sentiment is a bonus only (no subtraction)
+                    (semantic_score * 0.3)            
+                )
         aura_gain = int(round(aura_gain_raw))
         penalty_amount = 0
         toxic_loss = False
     elif toxic_loss:
         aura_gain = penalty_amount
+# === FIXED ELSE BLOCK (FOR NON-TOXIC MESSAGES) ===
     else:
+        # If toxic_loss is False, this message is NOT penalized.
+        # We will NOT allow any negative aura gains here.
+        # 1. Ignore negative AI scores (since no penalty is allowed)
+        positive_ai_score = max(0, ai_score)  # Only use positive AI sentiment
+        # 2. Ignore negative local sentiment scores
+        positive_local_score = max(0, local_score)
+        
+        # Calculate aura gain using ONLY positive contributions
         aura_gain_raw = (
-            rule_score * 0.8
-            + max(0, local_score) * 1.0
-            + semantic_score * 0.3
+            positive_ai_score * 1.2 +    # Positive AI sentiment bonus
+            rule_score * 0.8 +           # Length/quality bonus
+            positive_local_score * 0.4 + # Positive local sentiment bonus
+            semantic_score * 0.3         # Message energy bonus
         )
-        aura_gain = int(round(aura_gain_raw))
-        if aura_gain < 0:
-            aura_gain = 0
-
-    aura_gain = max(-5, min(aura_gain, 6))
+        
+        # Ensure no negative aura gain (critical fix for your logs)
+        aura_gain = max(0, int(round(aura_gain_raw)))
 
     # FIXED: Separate cooldown checks
     if aura_gain > 0:
@@ -4390,10 +6175,22 @@ async def on_message(message):
         return
 
     current = aura_data.get(user_id, 0)
-    new_score = max(0, current + aura_gain)
+
+    # 🔥 THIS is the ONLY place aura is updated
+    new_score = current + aura_gain   # aura_gain CAN be negative
 
     aura_data[user_id] = new_score
+
+    print(
+        f"[AURA FINAL] user={user_id} "
+        f"before={current} gain={aura_gain} after={new_score}"
+    )
+
+    save_json_safe(DATA_FILE, aura_data)
+
+
     save_data(aura_data)
+    print(f"[TOXIC APPLY] user={user_id} before={current} penalty={penalty} after={aura_data[user_id]}")
 
     recent_messages[user_id] = (content_norm, now)
 
@@ -4426,24 +6223,62 @@ async def on_message(message):
         f"[AURA] {message.author} "
         f"{'+' if aura_gain > 0 else ''}{aura_gain} → {new_score}"
     )
+    # DO NOT clamp aura here
+    save_json_safe(DATA_FILE, aura_data)
 
 # ============================================================================
 # COMMAND IMPLEMENTATIONS
 # ============================================================================
 
 @bot.command()
-async def aura(ctx):
-    """Check your aura score"""
-    score = aura_data.get(str(ctx.author.id), 0)
-    rank = get_rank_name(score)
+async def aura(ctx, member: discord.Member = None):
+    # 👑 DEV SPECIAL CASE
+    if ctx.author.id == OWNER_ID:
+        embed = discord.Embed(
+            description="🖤 **You don’t need aura — aura needs you.** ⚡",
+            color=0x000000
+        )
+        embed.set_footer(text="Auraxis • Origin of Aura")
+        await ctx.send(embed=embed)
+        return
+
+    # 👤 Normal users
+    member = member or ctx.author
+    user_id = str(member.id)
+    aura_score = aura_data.get(user_id, 0)
+
+    # 🎨 Color logic (optional but cool)
+    if aura_score >= 500:
+        color = 0xFFD700  # gold
+    elif aura_score >= 100:
+        color = 0x00FFAA  # green
+    elif aura_score >= 0:
+        color = 0x5865F2  # discord blurple
+    else:
+        color = 0xAA0000  # cursed red 😈
+
     embed = discord.Embed(
-        title=f"✨ {ctx.author.display_name}'s Aura",
-        color=0x5865F2
+        title="✨ Aura Status",
+        color=color
     )
-    embed.add_field(name="Score", value=f"**{score}**", inline=True)
-    embed.add_field(name="Rank", value=f"**{rank}**", inline=True)
-    embed.set_thumbnail(url=ctx.author.display_avatar.url)
+
+    embed.add_field(
+        name="👤 User",
+        value=member.mention,
+        inline=True
+    )
+
+    embed.add_field(
+        name="⚡ Aura",
+        value=f"`{aura_score}`",
+        inline=True
+    )
+
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.set_footer(text="Auraxis • Impact matters more than volume ⚡")
+
     await ctx.send(embed=embed)
+
 
 @bot.tree.command(name="aura", description="Check your aura score")
 async def aura_slash(interaction: discord.Interaction):
@@ -4572,6 +6407,12 @@ def make_leaderboard_embed(page: int, total_pages: int, entries, offset: int):
     return embed
 
 @bot.command()
+async def prefix(ctx):
+    guild_id = str(ctx.guild.id)
+    current = config_data.get(guild_id, {}).get("prefix", "!")
+    await ctx.send(f"🔧 Current prefix is `{current}`")
+
+@bot.command()
 async def auraboard(ctx, page: int = 1):
     """View the aura leaderboard"""
     if not aura_data:
@@ -4624,6 +6465,7 @@ async def commandlist(ctx):
             "`!auracard [@user]` - Profile card with cosmetics\n"
             "`!auragraph [@user] [days]` - Aura history graph\n"
             "`!aurapredict [@user] [days]` - Predict future aura\n"
+            "`!roast [@user]` - Roast someone \n"
             "`!aurainfo` - How the aura system works"
         ),
         inline=False
@@ -4634,6 +6476,15 @@ async def commandlist(ctx):
         value=(
             "`!aurabattle @user` - Challenge someone to battle\n"
             "`!battlestats [@user]` - View battle win/loss record"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="  troll ",
+        value=(
+            "`!nitro - for free nitro :)`\n"
+            "`!premiumroast - roast but premium :)`"
+            " `!auraa - check your aura :)`"
         ),
         inline=False
     )
@@ -5256,11 +7107,11 @@ async def resetuser_slash(interaction: discord.Interaction, user: discord.Member
 
 @bot.command()
 async def auraexplain(ctx):
-    """Reply to a message to see why it scored high/low"""
+    """Reply to a message to see why it scored a certain way (AI-first logic)."""
     if not ctx.message.reference:
         embed = discord.Embed(
             title="❓ How to use !auraexplain",
-            description="Reply to any message with `!auraexplain` to see a detailed breakdown of why it would gain or lose aura.",
+            description="Reply to any message with `!auraexplain` to see a detailed breakdown of why it got its aura score.",
             color=0x5865F2
         )
         await ctx.send(embed=embed)
@@ -5270,11 +7121,11 @@ async def auraexplain(ctx):
     content = replied_msg.content.strip()
     content_norm = normalize_message(content)
 
-    if len(content_norm.split()) < 4:
-        await ctx.send("❌ Message too short to analyze (needs at least 4 words)!")
+    if len(content_norm.split()) < 1:
+        await ctx.send("❌ Cannot analyze empty messages!")
         return
 
-    # Check hate speech first
+    # Step 1: Check for hate speech
     is_hate, hate_reason = contains_hate_speech_patterns(content)
     if is_hate:
         embed = discord.Embed(
@@ -5294,114 +7145,84 @@ async def auraexplain(ctx):
 
     is_hindi = is_hindi_or_hinglish(content_norm)
 
-    # Calculate scores
-    if is_obviously_safe(content_norm):
-        toxic_loss = False
-        toxic_reason = None
-        penalty_amount = 0
-        ai_score = 0
-    else:
-        ai_score = await calculate_ai_aura_devstral(content)
-        allowed, penalty_amount, toxic_expls = evaluate_toxic_decision(content, ai_score, replied_msg)
-        toxic_loss = allowed
-        toxic_reason = toxic_expls
+    # Step 2: Calculate scores
+    ai_score = await calculate_ai_aura_devstral(content)
+    allowed, penalty_amount, toxic_expls = evaluate_toxic_decision(content, ai_score, replied_msg)
+    toxic_loss = allowed
 
     rule_score = calculate_ai_aura_rules(content)
     local_score = calculate_ai_aura_local(content)
     semantic_score = calculate_ai_aura_semantic(content)
 
+    # Step 3: Apply new AI-first scoring logic
     if is_obviously_safe(content_norm):
-        aura_gain_raw = (
-            rule_score * 0.8
-            + max(0, local_score) * 1.0
-            + semantic_score * 0.3
-        )
-        total = int(round(aura_gain_raw))
+        if ai_score > 0:
+            aura_gain = ai_score + min(rule_score, 2) + min(semantic_score,1)
+            aura_gain = max(1, aura_gain)
+        else:
+            aura_gain = 0
         penalty_amount = 0
         toxic_loss = False
     elif toxic_loss:
-        total = penalty_amount
+        aura_gain = penalty_amount
     else:
-        aura_gain_raw = (
-            rule_score * 0.8
-            + max(0, local_score) * 1.0
-            + semantic_score * 0.3
-        )
-        total = int(round(aura_gain_raw))
-        if total < 0:
-            total = 0
+        if ai_score > 0:
+            aura_gain = ai_score + min(rule_score, 2) + min(semantic_score,1)
+            aura_gain = max(1, aura_gain)
+        else:
+            aura_gain = 0
 
-    total = max(-5, min(total, 6))
+    aura_gain = max(-5, min(aura_gain, 6))
 
-    # Build explanation
+    # Step 4: Build explanation (AI-first focus)
     explanations = []
-    if is_hindi:
-        explanations.append("🌍 **Hindi/Hinglish detected** — cultural slang and casual swears in friendly context are NOT penalized.")
-    
-    if is_obviously_safe(content_norm):
-        explanations.append("🟢 **No negative intent or targeting detected.**\n• Message classified as safe/positive")
-    else:
-        if toxic_loss and toxic_reason:
-            sem = toxic_reason.get("semantic")
-            targeted = toxic_reason.get("targeted_attack")
-            ai = toxic_reason.get("ai")
-            subexs = []
-            if sem == "toxic":
-                subexs.append("multilingual semantic intent matched toxic examples")
-            if targeted:
-                subexs.append("clearly targeted at a person")
-            if isinstance(ai, (int, float)) and ai <= -2:
-                subexs.append("AI flagged for abuse/harassment")
-            if subexs:
-                explanations.append(f"⚠️ **{toxic_reason.get('votes', 0)}/3 systems flagged as toxicity:**\n" + "\n".join(f"  • {s}" for s in subexs))
-            elif not toxic_loss:
-                explanations.append(
-                    "🟢 Message classified as **non-toxic**.\n"
-                    "• No hostility\n"
-                    "• No targeting\n"
-                    "• Casual / friendly language"
-    )
-            else:
-                explanations.append("✋ Message NOT considered toxic: either not targeted OR not abusive enough")
-        
-        if total > 0:
-            if rule_score >= 2:
-                explanations.append("✅ Positive signals detected (good length, positive words/emojis)")
-            if total > 3:
-                explanations.append("🌟 **High quality message! Elite aura gain**")
-            elif total > 0:
-                explanations.append("👍 **Solid message contribution**")
-        elif total == 0:
-            explanations.append("⚖️ **Balanced - neutral impact**")
+    score_breakdown = []
 
+    # AI Verdict (primary explanation)
+    if toxic_loss:
+        explanations.append(f"⚠️ **AI VERDICT: TOXIC** (Score: {ai_score})\nMessage is targeted, abusive, or hateful. Immediate penalty applied.")
+        score_breakdown.append(f"AI Toxic Penalty: {penalty_amount}")
+    elif ai_score > 0:
+        explanations.append(f"✅ **AI VERDICT: POSITIVE** (Score: {ai_score})\nMessage is helpful, engaging, or positive. Aura gain approved by AI.")
+        score_breakdown.append(f"AI Positive Score: +{ai_score}")
+        # Add helper bonuses if applicable
+        if rule_score >0:
+            score_breakdown.append(f"Length/Quality Bonus: +{min(rule_score,2)}")
+        if semantic_score >0:
+            score_breakdown.append(f"Message Energy Bonus: +{min(semantic_score,1)}")
+    else:
+        explanations.append(f"⚖️ **AI VERDICT: NEUTRAL/WEIRD** (Score: {ai_score})\nMessage is casual, neutral, or weird/gibberish. No aura gain approved by AI.")
+        score_breakdown.append("AI Neutral Score: 0 (No gain allowed)")
+        # Mention ignored helper scores
+        if rule_score >0 or semantic_score >0:
+            explanations.append(f"ℹ️ Helper scores (length/energy) were ignored because the AI didn't approve aura gain for this message.")
+
+    # Add cultural context if applicable
+    if is_hindi:
+        explanations.append("🌍 **Hindi/Hinglish detected** — AI adjusted for cultural slang and context.")
+
+    # Step 5: Build embed
     embed = discord.Embed(
         title=f"📝 Message Analysis: {replied_msg.author.display_name}",
-        description=f"**Would gain: {'+' if total >= 0 else ''}{total} aura**",
-        color=0x00ff00 if total >= 0 else (0xff0000 if total <= -2 else 0xffa500)
+        description=f"**Final Aura Change: {'+' if aura_gain >= 0 else ''}{aura_gain}**",
+        color=0x00ff00 if aura_gain >= 0 else (0xff0000 if aura_gain <= -2 else 0xffa500)
     )
 
-    if explanations:
-        embed.add_field(
-            name="💡 Why this score?",
-            value="\n\n".join(explanations),
-            inline=False
-        )
-    
-    # Add detailed breakdown
     embed.add_field(
-        name="📊 Score Breakdown",
-        value=(
-            f"**Rule-based:** {rule_score} (length, hype words, emojis)\n"
-            f"**Sentiment:** {local_score} (positive/negative tone)\n"
-            f"**Semantic:** {semantic_score} (message energy)\n"
-            f"**AI Score:** {ai_score if ai_score else 0} (culture-aware analysis)"
-        ),
+        name="💡 Why this score?",
+        value="\n\n".join(explanations),
         inline=False
     )
-    
+
+    embed.add_field(
+        name="📊 Score Breakdown",
+        value="\n".join(score_breakdown) or "No data",
+        inline=False
+    )
+
     snippet = content[:100] + ("..." if len(content) > 100 else "")
     embed.set_thumbnail(url=replied_msg.author.display_avatar.url)
-    embed.set_footer(text=f"Message: '{snippet}'")
+    embed.set_footer(text=f"Message: '{snippet}' | AI-First Scoring Logic")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -5572,70 +7393,22 @@ async def enablechannel(ctx):
     """Re-enable aura tracking in this channel."""
     await setchannel(ctx)
 
-@bot.command()
-@commands.has_permissions(manage_guild=True)
-async def setaura(ctx, member: discord.Member, amount: int):
-    """Set a user's aura to a specific amount."""
-    uid = str(member.id)
-    old_aura = aura_data.get(uid, 0)
-    aura_data[uid] = max(0, amount)
-    save_data(aura_data)
-    
-    log_aura_change(uid, amount - old_aura, amount, "admin_set")
-    
-    await ctx.send(f"✅ Set **{member.display_name}**'s aura to **{amount}** (was {old_aura})")
 
 @bot.command()
 @commands.has_permissions(manage_guild=True)
-async def resetaura(ctx, member: discord.Member):
-    """Reset a user's aura to 0."""
-    uid = str(member.id)
-    old_aura = aura_data.get(uid, 0)
-    aura_data[uid] = 0
-    save_data(aura_data)
-    
-    log_aura_change(uid, -old_aura, 0, "admin_reset")
-    
-    await ctx.send(f"✅ Reset **{member.display_name}**'s aura to **0** (was {old_aura})")
+async def setprefix(ctx, new_prefix: str):
+    if len(new_prefix) > 5:
+        await ctx.send("❌ Prefix too long (max 5 characters).")
+        return
 
-@bot.tree.command(name="setaura", description="Set a user's aura (Admin)")
-@app_commands.checks.has_permissions(manage_guild=True)
-async def setaura_slash(interaction: discord.Interaction, user: discord.Member, amount: int):
-    uid = str(user.id)
-    old_aura = aura_data.get(uid, 0)
-    new_aura = max(0, amount) # Ensure non-negative
-    aura_data[uid] = new_aura
-    save_data(aura_data)
-    
-    log_aura_change(uid, new_aura - old_aura, new_aura, "admin_set")
-    
-    # ✅ CRITICAL: Force global update immediately
-    update_global_stats(uid, user.name, new_aura, interaction.guild.name) 
-    
-    await interaction.response.send_message(
-        f"✅ Set **{user.display_name}**'s aura to **{new_aura}** (was {old_aura})",
-        ephemeral=True
-    )
+    guild_id = str(ctx.guild.id)
+    config_data.setdefault(guild_id, {})
+    config_data[guild_id]["prefix"] = new_prefix
+    save_json_safe(CONFIG_FILE, config_data)
 
-@setaura_slash.error
-async def setaura_slash_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ You need Manage Server permission!", ephemeral=True)
+    await ctx.send(f"✅ Prefix updated to `{new_prefix}`")
 
-@bot.tree.command(name="resetaura", description="Reset a user's aura (Admin)")
-@app_commands.checks.has_permissions(manage_guild=True)
-async def resetaura_slash(interaction: discord.Interaction, user: discord.Member):
-    uid = str(user.id)
-    old_aura = aura_data.get(uid, 0)
-    aura_data[uid] = 0
-    save_data(aura_data)
-    
-    log_aura_change(uid, -old_aura, 0, "admin_reset")
-    
-    await interaction.response.send_message(
-        f"✅ Reset **{user.display_name}**'s aura to **0** (was {old_aura})",
-        ephemeral=True
-    )
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def syncglobal(ctx):
@@ -5652,11 +7425,246 @@ async def syncglobal(ctx):
                 count += 1
     
     await ctx.send(f"✅ Synced {count} users to global leaderboard!")
-    
-@resetaura_slash.error
-async def resetaura_slash_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ You need Manage Server permission!", ephemeral=True)
+@bot.command(name="vote")
+async def vote(ctx):
+    bot_id = bot.user.id  # auto-detects your bot ID
+
+    embed = discord.Embed(
+        title="💖 Vote for the Bot on top.gg",
+        description=(
+            "Support the bot by voting on **top.gg**!\n\n"
+            "🗳️ You can vote **once every 12 hours**.\n"
+            "Every vote helps a LOT 🚀"
+        ),
+        color=0xFF3366
+    )
+
+    embed.add_field(
+        name="🔗 Vote Link",
+        value=f"[Click here to vote](https://top.gg/bot/1452461307935854755/vote)",
+        inline=False
+    )
+
+    embed.set_footer(text="Thank you for your support ❤️")
+
+    await ctx.send(embed=embed)
+
+@bot.tree.command(name="vote", description="Vote for the bot on top.gg")
+async def vote_slash(interaction: discord.Interaction):
+    bot_id = interaction.client.user.id
+
+    embed = discord.Embed(
+        title="💖 Vote for the Bot on top.gg",
+        description=(
+            "Support the bot by voting on **top.gg**!\n\n"
+            "🗳️ You can vote **once every 12 hours**."
+        ),
+        color=0xFF3366
+    )
+
+    embed.add_field(
+        name="🔗 Vote Link",
+        value=f"[Click here to vote](https://top.gg/bot/1452461307935854755/vote)",
+        inline=False
+    )
+
+    embed.set_footer(text="Every vote helps ❤️")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.command()
+async def setaura(ctx, member: discord.Member, amount: int):
+    if ctx.author.id != OWNER_ID:
+        await ctx.send("nope")
+        return
+
+    user_id = str(member.id)
+    old = aura_data.get(user_id, 0)
+    aura_data[user_id] = amount
+
+    save_json_safe(DATA_FILE, aura_data)
+
+    await ctx.send(
+        f"⚙️ **Aura Updated**\n"
+        f"👤 User: {member.mention}\n"
+        f"📉 Old Aura: `{old}`\n"
+        f"📈 New Aura: `{amount}`"
+    )
+
+    print(f"[SETAURA] owner={ctx.author} target={member} {old} → {amount}")
+
+@bot.command()
+async def roast(ctx):
+    if not ctx.message.reference:
+        await ctx.send("Reply to a message if you want me to roast it ")
+        return
+
+    replied_msg = await ctx.channel.fetch_message(
+        ctx.message.reference.message_id
+    )
+
+    # 👑 DEV IMMUNITY
+    if replied_msg.author.id == OWNER_ID:
+        await ctx.send(
+            "**Nice try.**"            
+        )
+        return
+
+    target_author = replied_msg.author
+    target_content = replied_msg.content.strip()
+
+    if not target_content:
+        await ctx.send("There’s nothing to roast here ")
+        return
+
+    roast_text = await generate_ai_roast(
+        roaster=ctx.author,
+        target=target_author,
+        message=target_content
+    )
+
+    embed = discord.Embed(
+        title="🔥 Aura Roast",
+        description=roast_text,
+        color=0xE74C3C
+    )
+    embed.set_footer(text="Auraxis • Controlled chaos ")
+
+    await ctx.send(embed=embed)
+
+import random
+from discord.ext import commands
+
+@bot.command(name="nitro")
+@commands.cooldown(1, 10, commands.BucketType.user)  # optional anti-spam
+async def nitro(ctx):
+    jokes = [
+        "🎁 Congrats! You’ve won **absolutely nothing**. ",
+        " get a life ",
+        " thats why you are broke",
+        "oh really?"
+        "🎉 You unlocked **Nitro Lite** (features: none).",
+        " why are you so innocent 😭 ",
+        " rick rolled "
+        "💳 Error: Your card was never charged because… this is a prank.",
+    ]
+    await ctx.send(random.choice(jokes))
+
+import random
+import asyncio
+import re
+import discord
+from discord.ext import commands
+
+# Safe fallback roasts (self-directed, playful)
+FALLBACK_ROASTS = [
+    "Bold move thinking someone else needed this more than you do.",
+    "You summoned the premium roast... and it chose you. Classic.",
+    "Even the AI knows your vibes need work first.",
+    "Premium service detected a higher priority target: you.",
+    "Roast rerouted to sender. Upgrade your deflection skills."
+]
+
+TOXICITY_REJECT_THRESHOLD = -3
+MAX_RETRIES = 2
+
+def _strip_mentions(text: str) -> str:
+    text = re.sub(r"<@!?\d+>", "", text)
+    text = text.replace("@everyone", "@\u200beveryone").replace("@here", "@\u200bhere")
+    return text.strip()
+
+async def generate_ai_premium_roast(invoker_name: str, *, temperature=0.7, max_tokens=60) -> str | None:
+    """Generates safe AI roast for invoker using Qwen + devstral safety check."""
+    system_prompt = (
+        "You are a roast feature in a discord bot called auraxise  . Output ONE short, punchy roast sentence (10-30 words) "
+        "that's brutal,clever, sarcastic, and fun — like friendly banter.\n\n"
+        "STRICT RULES:\n"
+        "- you can use slurs but dont be cringe or too toxic \n"
+        "- be brutal \n"
+        "- Focus on silly logic, confidence, or command irony.\n"
+        "- Do NOT include names, mentions, or metadata. Pure roast text only."
+    )
+    user_prompt = (
+        f"Roast someone named '{invoker_name}' who tried to premium-roast another user "
+        "(but it backfired on them). Make it ironic and self-own focused. One sentence."
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    for _ in range(MAX_RETRIES + 1):
+        try:
+            resp = openrouter_client.chat.completions.create(
+                model="qwen/qwen-2.5-7b-instruct",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            candidate = resp.choices[0].message.content.strip().splitlines()[0].strip().strip('"\'')
+            candidate = _strip_mentions(candidate)
+
+            if len(candidate) < 5:
+                continue
+
+            # Safety: score with your devstral function
+            score = await calculate_ai_aura_devstral(candidate)
+            if score <= TOXICITY_REJECT_THRESHOLD:
+                continue
+
+            if len(candidate) > 200:
+                candidate = candidate[:200].rsplit(" ", 1)[0] + "…"
+            return candidate
+        except Exception:
+            continue
+    return None
+
+@bot.command(name="premiumroast", aliases=["proast"])
+@commands.cooldown(1, 25, commands.BucketType.user)
+async def premiumroast(ctx, *, target_arg: str = None):
+    """Troll command: pretends to roast target, but roasts invoker instead."""
+    try:
+        await ctx.message.delete() 
+    except discord.Forbidden:
+        pass
+
+    async with ctx.channel.typing():
+        await asyncio.sleep(random.uniform(2.0, 3.5))  
+
+    # Generate roast for invoker only
+    roast = await generate_ai_premium_roast(ctx.author.display_name)
+    if not roast:
+        roast = random.choice(FALLBACK_ROASTS)
+
+    # Final reveal: roast invoker
+    embed = discord.Embed(
+        title="🤖 Premium Roast Delivered",
+        description=f"{ctx.author.mention}\n\n**{roast}**",
+        color=discord.Color.red()
+    )
+    embed.set_footer(text="Auraxis Premium™ — Self-roasts hit different 💀")
+    await ctx.send(embed=embed)
+
+import random
+import asyncio
+import discord
+from discord.ext import commands
+
+@bot.command(name="auraa")
+@commands.cooldown(1, 10, commands.BucketType.user)
+async def aura_troll(ctx):
+    """Troll aura checker: shows 'infinity', then flips to a roast."""
+    troll_lines = [
+        "Aura check complete: ∞ → Actually, that's the number of unread life tips you ignored.",
+        " Calibration error: your aura is just Wi‑Fi signals from your fridge.",
+        " Plot twist: that's the server lag, not your power level.",
+        " Correction: that's the number of times you’ve said 'trust me' today.",
+        " Update: it's mostly hot air and optimism."
+    ]
+
+    msg = await ctx.send("Aura: ∞")
+    await asyncio.sleep(random.uniform(1.2, 2.2))
+    await msg.edit(content=random.choice(troll_lines))
 
 # Error handlers for slash commands
 @aurach_enable_slash.error
@@ -5684,6 +7692,15 @@ async def resetall_slash_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ You need Administrator permission to use this command.", ephemeral=True)
 
+@setprefix.error
+async def setprefix_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You need **Manage Server** permission to change prefix.")
+@buy.error
+async def buy_error(ctx, error):
+    if isinstance(error, commands.CommandInvokeError):
+        await ctx.send("❌ Something went wrong while processing the purchase.")
+
 @debug_slash.error
 async def debug_slash_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
@@ -5695,4 +7712,4 @@ if not TOKEN:
 print("=" * 50)
 print("🚀 Starting Auraxis Bot...")
 print("=" * 50)
-bot.run(TOKEN)
+bot.run(TOKEN) 
